@@ -993,7 +993,7 @@ const procesarUpgradeComercialHandler = async (req, res) => {
             `¡ACTIVACIÓN COMERCIAL EXITOSA! 🚀\n\nID: ${merchantAliasUnico}\nComisión: $${COSTO_CAMBIO_PLAN_COMERCIAL} USDT`
         );
 
-        res.json({
+        return res.json({
             success: true,
             message: `¡Cuenta actualizada a comercial! Tu ID QR único generado es ${merchantAliasUnico}.`,
             merchantId: merchantAliasUnico,
@@ -1002,6 +1002,7 @@ const procesarUpgradeComercialHandler = async (req, res) => {
             dailyLimit: limiteIlimitado
         });
     } catch (err) {
+        console.error("Error en procesarUpgradeComercialHandler:", err);
         return res.status(500).json({ success: false, message: 'Error interno procesando el cambio de cuenta.' });
     }
 };
@@ -1025,8 +1026,9 @@ app.post('/api/upgrade-account', limiterPagos, async (req, res) => {
         );
         if (resultado.changes === 0) return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
         
-        res.json({ success: true, message: `¡Cuenta actualizada a ${accountType.toUpperCase()}!` });
+        return res.json({ success: true, message: `¡Cuenta actualizada a ${accountType.toUpperCase()}!` });
     } catch (err) {
+        console.error("Error en upgrade-account:", err);
         return res.status(500).json({ success: false, message: 'Error en base de datos.' });
     }
 });
