@@ -112,8 +112,7 @@ async function inicializarBaseDeDatos() {
                 fechaHora TEXT
             );
         `);
-
-        // Asegurar columnas opcionales si no existen
+// Asegurar columnas opcionales si no existen
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN merchant_id TEXT;"); } catch (e) {}
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN metodoVinculado INTEGER DEFAULT 0;"); } catch (e) {}
         
@@ -129,6 +128,7 @@ async function inicializarBaseDeDatos() {
     } catch (err) {
         console.error('❌ Error al inicializar SQLite:', err.message);
     }
+
 }
 
 // Llamada única y limpia para arrancar la base de datos
