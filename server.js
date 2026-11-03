@@ -875,7 +875,7 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
         // ========================================================
         // BLOQUE BLINDADO: VERIFICACIÓN DOBLE CONTRA DUPLICADOS
         // ========================================================
-const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telefono]);
+        const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telefono]);
 
         if (usuarioExistenteDuplicado) {
             const mensajeLoginDuplicado = `¡Acceso Recuperado en PagoMóvilUSDT! 🟢\n\nTu línea ya estaba registrada. Se mantiene tu monedero exclusivo de por vida.\n\n🔢 *Código de verificación:* *${codigoVerificacion}*`;
@@ -926,7 +926,7 @@ const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE tel
             telefono: telefono,
             assigned_wallet: nuevaWalletCrypto.address
         });
-    });
+    }
 // ==========================================
 // CAMBIO A CUENTA COMERCIAL
 // ==========================================
