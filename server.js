@@ -1325,13 +1325,13 @@ app.post('/api/procesar-retiro', limiterPagos, procesarRetiroHandler);
 app.post('/api/recargar', limiterPagos, logicaRecargaHandler);
 app.post('/recargar', limiterPagos, logicaRecargaHandler);
 
-// ==========================================
+// ========================================================
 // MANTENIMIENTO AUTOMÁTICO
-// ==========================================
+// ========================================================
 setInterval(async () => {
     try {
         if (db) {
-            await db.run("DELETE FROM transacciones WHERE fechaHora < datetime('now', '-60 days')");
+            await db.run("DELETE FROM transacciones WHERE fechahora < datetime('now', '-50 days')");
             await db.run("VACUUM;");
         }
     } catch (e) {}
@@ -1339,5 +1339,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Servidor de PagoMóvil USDT corriendo en el puerto ${PORT}`);
+    console.log(`Servidor de PagoMóvil USDT corriendo en el puerto ${PORT}`);
 });
