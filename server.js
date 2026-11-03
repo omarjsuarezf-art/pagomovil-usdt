@@ -926,7 +926,8 @@ const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE tel
             telefono: telefono,
             assigned_wallet: nuevaWalletCrypto.address
         });
-    }
+    }catch (err) {
+    console.error("Error en bloque:", err);
 }
 // ==========================================
 // CAMBIO A CUENTA COMERCIAL
