@@ -926,10 +926,11 @@ const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE tel
             telefono: telefono,
             assigned_wallet: nuevaWalletCrypto.address
         });
-    } catch (err) {
+  } catch (err) {
         return res.status(500).json({ success: false, message: 'Error interno.' });
     }
 });
+
 // ==========================================
 // CAMBIO A CUENTA COMERCIAL
 // ==========================================
