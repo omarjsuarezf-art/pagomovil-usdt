@@ -58,7 +58,7 @@ async function enviarCorreoResend(destino, asunto, mensajeHtml) {
 // ==========================================
 // CONFIGURACIÓN DE BASE DE DATOS (SQLITE ASÍNCRONO OPTIMIZADO)
 // ==========================================
-async function inicializarBaseDatos() {
+async function inicializarBaseDeDatos() {
     try {
         const dbPath = path.resolve(__dirname, 'monedero.db');
         db = await open({
@@ -121,16 +121,18 @@ async function inicializarBaseDatos() {
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN assigned_wallet TEXT;"); } catch (e) {}
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN private_key TEXT;"); } catch (e) {}
 
+        // REGLA DE ORO: Índice único para que SQLite prohíba 100% que dos usuarios tengan la misma wallet
+        try {
+            await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);");
+        } catch (e) {}
+
     } catch (err) {
         console.error('❌ Error al inicializar SQLite:', err.message);
     }
 }
-// REGLA DE ORO: Índice único para que SQLite prohíba 100% que dos usuarios tengan la misma wallet
-try { 
-    await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);"); 
-} catch (e) {}
-inicializarBaseDatos();
 
+// Llamada única y limpia para arrancar la base de datos
+inicializarBaseDeDatos();
 // ==========================================
 // CONFIGURACIÓN DE RATE LIMITING (SEGURIDAD DIFERENCIADA)
 // ==========================================
