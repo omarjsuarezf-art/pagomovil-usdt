@@ -925,9 +925,9 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             message: '¡Bienvenido! Su registro inicial fue exitoso con su wallet única y permanente.',
             telefono: telefono,
             assigned_wallet: nuevaWalletCrypto.address
-        });
+      });
     }
-      
+});
 // ==========================================
 // CAMBIO A CUENTA COMERCIAL
 // ==========================================
