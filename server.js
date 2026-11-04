@@ -416,6 +416,8 @@ app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
     }
 });
 
+app.post('/api/confirmar-recuperacion-pin', async (req, res) => {
+    try {
         // ==========================================
         // NUEVA CAPA: VALIDACIÓN Y ENVÍO SEGURO POR CORREO
         // ==========================================
@@ -466,7 +468,7 @@ app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
         console.error('Error al confirmar recuperación de PIN:', err);
         return res.status(500).json({ success: false, message: 'Error interno al procesar el cambio de PIN.' });
     }
-});
+}); 
 // ==========================================
 // APIS Y RUTAS
 // ==========================================
