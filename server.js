@@ -1375,7 +1375,7 @@ setInterval(async () => {
             // Usamos datetime('now') comparado con el formato compatible de SQLite
             await db.run(`
                 DELETE FROM transacciones 
-                WHERE datetime(SUBSTR(fechahora, 7, 4) || '-' || SUBSTR(fechahora, 4, 2) || '-' || SUBSTR(fechahora, 1, 2)) < datetime('now', '-50 days')
+                WHERE datetime(SUBSTR(fechahora, 7, 4) || '-' || SUBSTR(fechahora, 4, 2) || '-' || SUBSTR(fechahora, 1, 2)) < datetime('now', '-50 days');
             `);
 
             // Compacta la base de datos para liberar espacio físico en disco y mantenerla ligera
@@ -1385,7 +1385,7 @@ setInterval(async () => {
     } catch (e) {
         console.error("⚠️ Error en el mantenimiento automático:", e.message);
     }
-}, 24 * 60 * 60 * 1000); // Se ejecuta automáticamente cada 24 horas
+}, 24 * 60 * 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
