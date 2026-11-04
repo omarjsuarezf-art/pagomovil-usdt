@@ -399,6 +399,23 @@ app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
             return res.status(400).json({ success: false, message: '❌ Los últimos 4 dígitos de la cédula no coinciden.' });
         }
 
+        // Actualizar el PIN de seguridad en la base de datos
+        await db.run('UPDATE usuarios SET pinSeguridad = ? WHERE id = ?', [nuevoPin, usuario.id]);
+
+        // Limpiar el registro del OTP usado
+        codigosRecuperacion.delete(telefono);
+
+        // Notificar por WhatsApp el cambio de PIN
+        await enviarMensajeWhatsappSeguro(telefono, '🔐 Su PIN de seguridad ha sido modificado exitosamente.');
+
+        return res.json({ success: true, message: '✅ PIN actualizado exitosamente.' });
+
+    } catch (err) {
+        console.error('⚠️ Error en recuperación de PIN:', err.message);
+        return res.status(500).json({ success: false, message: '❌ Error interno al procesar la recuperación del PIN.' });
+    }
+});
+
         // ==========================================
         // NUEVA CAPA: VALIDACIÓN Y ENVÍO SEGURO POR CORREO
         // ==========================================
@@ -816,7 +833,8 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
     if (!telefono || !pinSeguridad) {
         return res.status(400).json({ success: false, message: 'El teléfono y el PIN de seguridad son obligatorios.' });
     }
-// FILTRO ANTI-CHOROS Y BOTS: Solo prefijos móviles reales de Venezuela
+
+    // FILTRO ANTI-CHOROS Y BOTS: Solo prefijos móviles reales de Venezuela
     const telefonoLimpio = telefono.replace(/\D/g, '');
     const regexMovilVenezuela = /^0?(412|414|424|416|426)\d{7}$/;
     
@@ -826,7 +844,6 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             message: '❌ Prefijo o número móvil inválido. En Venezuela solo se permiten operadoras oficiales.' 
         });
     }
-  
 
     try {
         const usuarioExistente = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
@@ -869,8 +886,31 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
 
             return res.json({ 
                 success: true, 
-                message: '¡Acceso autorizado y código enviado por WhatsApp con éxito!'
+                message: '¡Acceso autorizado y código enviado por WhatsApp con éxito!' 
             });
+
+        } else {
+            // Flujo para nuevos usuarios: guarda el OTP en memoria con vigencia de 5 minutos
+            codigosRecuperacion.set(telefono, {
+                otp: codigoVerificacion,
+                timestamp: Date.now(),
+                pinPendiente: pinSeguridad
+            });
+
+            const mensajeRegistro = `¡Bienvenido a PagoMóvilUSDT! 🚀\n\nTu código de verificación para completar el registro es:\n\n🔢 *${codigoVerificacion}*`;
+            await enviarMensajeWhatsappSeguro(telefono, mensajeRegistro);
+
+            return res.json({ 
+                success: true, 
+                message: '¡Código de registro enviado por WhatsApp con éxito!' 
+            });
+        }
+
+    } catch (err) {
+        console.error('⚠️ Error en /api/enviar-codigo:', err.message);
+        return res.status(500).json({ success: false, message: '❌ Error interno al procesar el envío del código.' });
+    }
+});
 } else {
         // ========================================================
         // BLOQUE BLINDADO: VERIFICACIÓN DOBLE CONTRA DUPLICADOS
@@ -1325,17 +1365,27 @@ app.post('/api/procesar-retiro', limiterPagos, procesarRetiroHandler);
 app.post('/api/recargar', limiterPagos, logicaRecargaHandler);
 app.post('/recargar', limiterPagos, logicaRecargaHandler);
 
-// ========================================================
-// MANTENIMIENTO AUTOMÁTICO
-// ========================================================
+// ==========================================
+// MANTENIMIENTO AUTOMÁTICO (LIMPIEZA DE REGISTROS > 50 DÍAS)
+// ==========================================
 setInterval(async () => {
     try {
         if (db) {
-            await db.run("DELETE FROM transacciones WHERE fechahora < datetime('now', '-50 days')");
+            // Depura la tabla transacciones eliminando registros cuya fecha tenga más de 50 días de antigüedad
+            // Usamos datetime('now') comparado con el formato compatible de SQLite
+            await db.run(`
+                DELETE FROM transacciones 
+                WHERE datetime(SUBSTR(fechahora, 7, 4) || '-' || SUBSTR(fechahora, 4, 2) || '-' || SUBSTR(fechahora, 1, 2)) < datetime('now', '-50 days')
+            `);
+
+            // Compacta la base de datos para liberar espacio físico en disco y mantenerla ligera
             await db.run("VACUUM;");
+            console.log("🧹 Mantenimiento automático ejecutado: Transacciones mayores a 50 días depuradas con éxito.");
         }
-    } catch (e) {}
-}, 24 * 60 * 60 * 1000);
+    } catch (e) {
+        console.error("⚠️ Error en el mantenimiento automático:", e.message);
+    }
+}, 24 * 60 * 60 * 1000); // Se ejecuta automáticamente cada 24 horas
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
