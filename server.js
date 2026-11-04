@@ -836,7 +836,6 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
         return res.status(400).json({ success: false, message: 'El teléfono y el PIN de seguridad son obligatorios.' });
     }
 
-    // FILTRO ANTI-CHOROS Y BOTS: Solo prefijos móviles reales de Venezuela
     const telefonoLimpio = telefono.replace(/\D/g, '');
     const regexMovilVenezuela = /^0?(412|414|424|416|426)\d{7}$/;
     
@@ -849,11 +848,9 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
 
     try {
         const usuarioExistente = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
-
         const codigoVerificacion = Math.floor(100000 + Math.random() * 900000).toString();
 
         if (usuarioExistente) {
-            // Verificar PIN (admite PIN fijo de 4 dígitos o PIN temporal de 6 dígitos)
             let pinValido = false;
             if (pinSeguridad.length === 6) {
                 const registroOTP = codigosRecuperacion.get(usuarioExistente.telefono);
@@ -867,108 +864,46 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             }
 
             if (!pinValido) {
-                return res.status(401).json({ 
-                    success: false, 
-                    message: '❌ Acceso denegado. Este número ya está registrado y el PIN de seguridad es incorrecto.' 
-                });
+                return res.status(401).json({ success: false, message: '❌ PIN de seguridad incorrecto.' });
             }
 
-            const esComercio = usuarioExistente.accountType === 'comercial' || usuarioExistente.accountType === 'emprendedor';
-            if (usuarioExistente.metodoVinculado !== 1 && !esComercio) {
-                return res.status(403).json({
-                    success: false,
-                    bloqueoRegistro: true,
-                    message: '❌ Acceso restringido. Debe vincular obligatoriamente su Cédula y Monedero/Cuenta de recepción para operar.',
-                    telefono: usuarioExistente.telefono
-                });
-            }
-
-            const mensajeLogin = `¡Acceso Verificado en PagoMóvilUSDT! 🟢\n\nTu línea ha sido autenticada correctamente.\n\n🔢 *Código de verificación:* *${codigoVerificacion}*`;
-            await enviarMensajeWhatsappSeguro(telefono, mensajeLogin);
-
-            return res.json({ 
-                success: true, 
-                message: '¡Acceso autorizado y código enviado por WhatsApp con éxito!' 
-            });
+            await enviarMensajeWhatsappSeguro(telefono, `¡Acceso Verificado! 🟢\n\n🔢 *Código:* *${codigoVerificacion}*`);
+            return res.json({ success: true, message: '¡Código enviado por WhatsApp!' });
 
         } else {
-            // Flujo para nuevos usuarios: guarda el OTP en memoria con vigencia de 5 minutos
-            codigosRecuperacion.set(telefono, {
-                otp: codigoVerificacion,
-                timestamp: Date.now(),
-                pinPendiente: pinSeguridad
-            });
+            let walletGenerada = ethers.Wallet.createRandom();
+            let walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
+            while (walletRepetida) {
+                walletGenerada = ethers.Wallet.createRandom();
+                walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
+            }
 
-            const mensajeRegistro = `¡Bienvenido a PagoMóvilUSDT! 🚀\n\nTu código de verificación para completar el registro es:\n\n🔢 *${codigoVerificacion}*`;
-            await enviarMensajeWhatsappSeguro(telefono, mensajeRegistro);
+            await db.run(
+                `INSERT INTO usuarios (telefono, pinSeguridad, accountType, dailyLimit, metodoVinculado, assigned_wallet, private_key) VALUES (?, ?, 'natural', 1000.00, 0, ?, ?)`,
+                [telefono, pinSeguridad, walletGenerada.address, walletGenerada.privateKey]
+            );
 
-            return res.json({ 
-                success: true, 
-                message: '¡Código de registro enviado por WhatsApp con éxito!' 
-            });
-        }
-
-    } catch (err) {
-        console.error('⚠️ Error en /api/enviar-codigo:', err.message);
-        return res.status(500).json({ success: false, message: '❌ Error interno al procesar el envío del código.' });
-    }
-});
-} else {
-        // ========================================================
-        // BLOQUE BLINDADO: VERIFICACIÓN DOBLE CONTRA DUPLICADOS
-        // ========================================================
-        const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telefono]);
-
-        if (usuarioExistenteDuplicado) {
-            const mensajeLoginDuplicado = `¡Acceso Recuperado en PagoMóvilUSDT! 🟢\n\nTu línea ya estaba registrada. Se mantiene tu monedero exclusivo de por vida.\n\n🔢 *Código de verificación:* *${codigoVerificacion}*`;
-            await enviarMensajeWhatsappSeguro(telefono, mensajeLoginDuplicado);
-
-            return res.json({ 
-                success: true, 
-                message: '¡El número ya estaba registrado! Se ha enviado tu código de acceso y tu cuenta original está a salvo.' 
-            });
-        }
-
-        // Si es 100% nuevo, creamos su única wallet de por vida de forma segura y exclusiva
-        let walletGenerada = ethers.Wallet.createRandom();
-        
-        // Verificación extra para asegurar que la wallet no exista previamente en otro registro
-        let walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
-        while (walletRepetida) {
-            walletGenerada = ethers.Wallet.createRandom();
-            walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
-        }
-
-        const nuevaWalletCrypto = {
-            address: walletGenerada.address,
-            privatekey: walletGenerada.privateKey
-        };
-
-        await db.run(
-            `INSERT INTO usuarios (telefono, pinSeguridad, accountType, dailyLimit, metodoVinculado, assigned_wallet, private_key) VALUES (?, ?, 'natural', 1000.00, 0, ?, ?)`,
-            [telefono, pinSeguridad, nuevaWalletCrypto.address, nuevaWalletCrypto.privateKey]
-        );
-
-        const userRecord = await db.get('SELECT id FROM usuarios WHERE telefono = ?', [telefono]);
-        if (userRecord) {
-            const existingWallet = await db.get('SELECT id FROM wallets WHERE user_id = ?', [userRecord.id]);
-            if (!existingWallet) {
+            const userRecord = await db.get('SELECT id FROM usuarios WHERE telefono = ?', [telefono]);
+            if (userRecord) {
                 await db.run('INSERT INTO wallets (user_id, usdt_balance) VALUES (?, 0.00)', [userRecord.id]);
             }
+
+            await enviarMensajeWhatsappSeguro(telefono, `¡Bienvenido a PagoMóvilUSDT! 🚀\n\n🔑 PIN: ${pinSeguridad}\n📥 Wallet Polygon: ${walletGenerada.address}`);
+
+            return res.json({
+                success: true,
+                bloqueoRegistro: true,
+                message: '¡Registro exitoso con wallet única!',
+                telefono: telefono,
+                assigned_wallet: walletGenerada.address
+            });
         }
-
-        const mensajeBienvenida = `¡Bienvenido a PagoMóvilUSDT! 🟢\n\nEstimado usuario, su registro ha sido exitoso.\n\n🔑 PIN: ${pinSeguridad}\n📥 Tu Wallet Polygon Asignada (De por vida):\n${nuevaWalletCrypto.address}\n\n🛡️ Cuenta vinculada de forma exclusiva a tu número.`;
-        
-        await enviarMensajeWhatsappSeguro(telefono, mensajeBienvenida);
-
-        return res.json({
-            success: true,
-            bloqueoRegistro: true,
-            message: '¡Bienvenido! Su registro inicial fue exitoso con su wallet única y permanente.',
-            telefono: telefono,
-            assigned_wallet: nuevaWalletCrypto.address
-        });
+    } catch (err) {
+        console.error('⚠️ Error en /api/enviar-codigo:', err.message);
+        return res.status(500).json({ success: false, message: '❌ Error interno.' });
     }
+});
+
 // ==========================================
 // CAMBIO A CUENTA COMERCIAL
 // ==========================================
