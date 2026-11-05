@@ -1266,7 +1266,7 @@ setInterval(async () => {
     } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Servidor de PagoMóvil USDT corriendo en el puerto ${PORT}`);
+const port = process.env.PORT || 3000;
+app.listen(port, '0.0.0.0', () => {
+    console.log(`🚀 Servidor de Pagomovil-usdt corriendo en el puerto ${port}`);
 });
