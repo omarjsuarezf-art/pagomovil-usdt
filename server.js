@@ -58,7 +58,7 @@ async function enviarCorreoResend(destino, asunto, mensajeHtml) {
 // ==========================================
 // CONFIGURACIÓN DE BASE DE DATOS (SQLITE ASÍNCRONO OPTIMIZADO)
 // ==========================================
-async function inicializarBaseDeDatos() {
+async function inicializarBaseDatos() {
     try {
         const dbPath = path.resolve(__dirname, 'monedero.db');
         db = await open({
@@ -112,7 +112,8 @@ async function inicializarBaseDeDatos() {
                 fechaHora TEXT
             );
         `);
-// Asegurar columnas opcionales si no existen
+
+        // Asegurar columnas opcionales si no existen
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN merchant_id TEXT;"); } catch (e) {}
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN metodoVinculado INTEGER DEFAULT 0;"); } catch (e) {}
         
@@ -120,19 +121,16 @@ async function inicializarBaseDeDatos() {
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN assigned_wallet TEXT;"); } catch (e) {}
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN private_key TEXT;"); } catch (e) {}
 
-        // REGLA DE ORO: Índice único para que SQLite prohíba 100% que dos usuarios tengan la misma wallet
-        try {
-            await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);");
-        } catch (e) {}
-
     } catch (err) {
         console.error('❌ Error al inicializar SQLite:', err.message);
     }
-
 }
+// REGLA DE ORO: Índice único para que SQLite prohíba 100% que dos usuarios tengan la misma wallet
+try { 
+    await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);"); 
+} catch (e) {}
+inicializarBaseDatos();
 
-// Llamada única y limpia para arrancar la base de datos
-inicializarBaseDeDatos();
 // ==========================================
 // CONFIGURACIÓN DE RATE LIMITING (SEGURIDAD DIFERENCIADA)
 // ==========================================
@@ -399,25 +397,6 @@ app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
             return res.status(400).json({ success: false, message: '❌ Los últimos 4 dígitos de la cédula no coinciden.' });
         }
 
-        // Actualizar el PIN de seguridad en la base de datos
-        await db.run('UPDATE usuarios SET pinSeguridad = ? WHERE id = ?', [nuevoPin, usuario.id]);
-
-        // Limpiar el registro del OTP usado
-        codigosRecuperacion.delete(telefono);
-
-        // Notificar por WhatsApp el cambio de PIN
-        await enviarMensajeWhatsappSeguro(telefono, '🔐 Su PIN de seguridad ha sido modificado exitosamente.');
-
-        return res.json({ success: true, message: '✅ PIN actualizado exitosamente.' });
-
-    } catch (err) {
-        console.error('⚠️ Error en recuperación de PIN:', err.message);
-        return res.status(500).json({ success: false, message: '❌ Error interno al procesar la recuperación del PIN.' });
-    }
-});
-
-app.post('/api/confirmar-recuperacion-pin', async (req, res) => {
-    try {
         // ==========================================
         // NUEVA CAPA: VALIDACIÓN Y ENVÍO SEGURO POR CORREO
         // ==========================================
@@ -468,7 +447,7 @@ app.post('/api/confirmar-recuperacion-pin', async (req, res) => {
         console.error('Error al confirmar recuperación de PIN:', err);
         return res.status(500).json({ success: false, message: 'Error interno al procesar el cambio de PIN.' });
     }
-}); 
+});
 // ==========================================
 // APIS Y RUTAS
 // ==========================================
@@ -835,7 +814,7 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
     if (!telefono || !pinSeguridad) {
         return res.status(400).json({ success: false, message: 'El teléfono y el PIN de seguridad son obligatorios.' });
     }
-
+// FILTRO ANTI-CHOROS Y BOTS: Solo prefijos móviles reales de Venezuela
     const telefonoLimpio = telefono.replace(/\D/g, '');
     const regexMovilVenezuela = /^0?(412|414|424|416|426)\d{7}$/;
     
@@ -845,12 +824,15 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             message: '❌ Prefijo o número móvil inválido. En Venezuela solo se permiten operadoras oficiales.' 
         });
     }
+  
 
     try {
         const usuarioExistente = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
+
         const codigoVerificacion = Math.floor(100000 + Math.random() * 900000).toString();
 
         if (usuarioExistente) {
+            // Verificar PIN (admite PIN fijo de 4 dígitos o PIN temporal de 6 dígitos)
             let pinValido = false;
             if (pinSeguridad.length === 6) {
                 const registroOTP = codigosRecuperacion.get(usuarioExistente.telefono);
@@ -864,46 +846,86 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             }
 
             if (!pinValido) {
-                return res.status(401).json({ success: false, message: '❌ PIN de seguridad incorrecto.' });
+                return res.status(401).json({ 
+                    success: false, 
+                    message: '❌ Acceso denegado. Este número ya está registrado y el PIN de seguridad es incorrecto.' 
+                });
             }
 
-            await enviarMensajeWhatsappSeguro(telefono, `¡Acceso Verificado! 🟢\n\n🔢 *Código:* *${codigoVerificacion}*`);
-            return res.json({ success: true, message: '¡Código enviado por WhatsApp!' });
-
-        } else {
-            let walletGenerada = ethers.Wallet.createRandom();
-            let walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
-            while (walletRepetida) {
-                walletGenerada = ethers.Wallet.createRandom();
-                walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
+            const esComercio = usuarioExistente.accountType === 'comercial' || usuarioExistente.accountType === 'emprendedor';
+            if (usuarioExistente.metodoVinculado !== 1 && !esComercio) {
+                return res.status(403).json({
+                    success: false,
+                    bloqueoRegistro: true,
+                    message: '❌ Acceso restringido. Debe vincular obligatoriamente su Cédula y Monedero/Cuenta de recepción para operar.',
+                    telefono: usuarioExistente.telefono
+                });
             }
 
-            await db.run(
-                `INSERT INTO usuarios (telefono, pinSeguridad, accountType, dailyLimit, metodoVinculado, assigned_wallet, private_key) VALUES (?, ?, 'natural', 1000.00, 0, ?, ?)`,
-                [telefono, pinSeguridad, walletGenerada.address, walletGenerada.privateKey]
-            );
+            const mensajeLogin = `¡Acceso Verificado en PagoMóvilUSDT! 🟢\n\nTu línea ha sido autenticada correctamente.\n\n🔢 *Código de verificación:* *${codigoVerificacion}*`;
+            await enviarMensajeWhatsappSeguro(telefono, mensajeLogin);
 
-            const userRecord = await db.get('SELECT id FROM usuarios WHERE telefono = ?', [telefono]);
-            if (userRecord) {
-                await db.run('INSERT INTO wallets (user_id, usdt_balance) VALUES (?, 0.00)', [userRecord.id]);
-            }
+            return res.json({ 
+                success: true, 
+                message: '¡Acceso autorizado y código enviado por WhatsApp con éxito!'
+            });
+} else {
+        // ========================================================
+        // BLOQUE BLINDADO: VERIFICACIÓN DOBLE CONTRA DUPLICADOS
+        // ========================================================
+        const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telefono]);
 
-            await enviarMensajeWhatsappSeguro(telefono, `¡Bienvenido a PagoMóvilUSDT! 🚀\n\n🔑 PIN: ${pinSeguridad}\n📥 Wallet Polygon: ${walletGenerada.address}`);
+        if (usuarioExistenteDuplicado) {
+            const mensajeLoginDuplicado = `¡Acceso Recuperado en PagoMóvilUSDT! 🟢\n\nTu línea ya estaba registrada. Se mantiene tu monedero exclusivo de por vida.\n\n🔢 *Código de verificación:* *${codigoVerificacion}*`;
+            await enviarMensajeWhatsappSeguro(telefono, mensajeLoginDuplicado);
 
-            return res.json({
-                success: true,
-                bloqueoRegistro: true,
-                message: '¡Registro exitoso con wallet única!',
-                telefono: telefono,
-                assigned_wallet: walletGenerada.address
+            return res.json({ 
+                success: true, 
+                message: '¡El número ya estaba registrado! Se ha enviado tu código de acceso y tu cuenta original está a salvo.' 
             });
         }
-    } catch (err) {
-        console.error('⚠️ Error en /api/enviar-codigo:', err.message);
-        return res.status(500).json({ success: false, message: '❌ Error interno.' });
-    }
-});
 
+        // Si es 100% nuevo, creamos su única wallet de por vida de forma segura y exclusiva
+        let walletGenerada = ethers.Wallet.createRandom();
+        
+        // Verificación extra para asegurar que la wallet no exista previamente en otro registro
+        let walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
+        while (walletRepetida) {
+            walletGenerada = ethers.Wallet.createRandom();
+            walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
+        }
+
+        const nuevaWalletCrypto = {
+            address: walletGenerada.address,
+            privatekey: walletGenerada.privateKey
+        };
+
+        await db.run(
+            `INSERT INTO usuarios (telefono, pinSeguridad, accountType, dailyLimit, metodoVinculado, assigned_wallet, private_key) VALUES (?, ?, 'natural', 1000.00, 0, ?, ?)`,
+            [telefono, pinSeguridad, nuevaWalletCrypto.address, nuevaWalletCrypto.privateKey]
+        );
+
+        const userRecord = await db.get('SELECT id FROM usuarios WHERE telefono = ?', [telefono]);
+        if (userRecord) {
+            const existingWallet = await db.get('SELECT id FROM wallets WHERE user_id = ?', [userRecord.id]);
+            if (!existingWallet) {
+                await db.run('INSERT INTO wallets (user_id, usdt_balance) VALUES (?, 0.00)', [userRecord.id]);
+            }
+        }
+
+        const mensajeBienvenida = `¡Bienvenido a PagoMóvilUSDT! 🟢\n\nEstimado usuario, su registro ha sido exitoso.\n\n🔑 PIN: ${pinSeguridad}\n📥 Tu Wallet Polygon Asignada (De por vida):\n${nuevaWalletCrypto.address}\n\n🛡️ Cuenta vinculada de forma exclusiva a tu número.`;
+        
+        await enviarMensajeWhatsappSeguro(telefono, mensajeBienvenida);
+
+        return res.json({
+            success: true,
+            bloqueoRegistro: true,
+            message: '¡Bienvenido! Su registro inicial fue exitoso con su wallet única y permanente.',
+            telefono: telefono,
+            assigned_wallet: nuevaWalletCrypto.address
+        });
+    }
+      
 // ==========================================
 // CAMBIO A CUENTA COMERCIAL
 // ==========================================
@@ -969,7 +991,7 @@ const procesarUpgradeComercialHandler = async (req, res) => {
             `¡ACTIVACIÓN COMERCIAL EXITOSA! 🚀\n\nID: ${merchantAliasUnico}\nComisión: $${COSTO_CAMBIO_PLAN_COMERCIAL} USDT`
         );
 
-        return res.json({
+        res.json({
             success: true,
             message: `¡Cuenta actualizada a comercial! Tu ID QR único generado es ${merchantAliasUnico}.`,
             merchantId: merchantAliasUnico,
@@ -978,7 +1000,6 @@ const procesarUpgradeComercialHandler = async (req, res) => {
             dailyLimit: limiteIlimitado
         });
     } catch (err) {
-        console.error("Error en procesarUpgradeComercialHandler:", err);
         return res.status(500).json({ success: false, message: 'Error interno procesando el cambio de cuenta.' });
     }
 };
@@ -1002,39 +1023,32 @@ app.post('/api/upgrade-account', limiterPagos, async (req, res) => {
         );
         if (resultado.changes === 0) return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
         
-        return res.json({ success: true, message: `¡Cuenta actualizada a ${accountType.toUpperCase()}!` });
+        res.json({ success: true, message: `¡Cuenta actualizada a ${accountType.toUpperCase()}!` });
     } catch (err) {
-        console.error("Error en upgrade-account:", err);
         return res.status(500).json({ success: false, message: 'Error en base de datos.' });
     }
 });
 
 // ==========================================
-// PROCESAR RETIRO REAL EN LA BLOCKCHAIN (CON HASH Y TRANSPARENCIA)
+// PROCESAR RETIRO DESDE LA WALLET INDIVIDUAL
 // ==========================================
 async function procesarRetiroHandler(req, res) {
     try {
         const { telefono, pin, direccionDestino, monto } = req.body;
 
-        // 1. Validar datos obligatorios
+        // 1. Validar que vengan los datos obligatorios
         if (!telefono || !direccionDestino || !monto) {
             return res.status(400).json({ success: false, message: 'Faltan datos obligatorios para el retiro (dirección o monto).' });
         }
 
-        // Validar que la dirección de destino comience con 0x y tenga formato válido de Polygon
-        const cleanDestino = direccionDestino.trim();
-        if (!cleanDestino.startsWith('0x') || cleanDestino.length < 40) {
-            return res.status(400).json({ success: false, message: '❌ Dirección de billetera destino inválida. Debe ser una dirección de Polygon (Ej: 0x...).' });
-        }
-
         // 2. Buscar al usuario y su PIN en SQLite
-        const usuario = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
+        const usuario = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telefono]);
         if (!usuario) {
             return res.status(400).json({ success: false, message: 'Usuario no encontrado en la plataforma.' });
         }
 
         if (pin && usuario.pinSeguridad && usuario.pinSeguridad !== pin) {
-            return res.status(400).json({ success: false, message: 'PIN de seguridad incorrecto.' });
+            return res.status(400).json({ success: false, message: 'PIN incorrecto.' });
         }
 
         // 3. Verificar saldo en el monedero del usuario
@@ -1044,87 +1058,31 @@ async function procesarRetiroHandler(req, res) {
         }
 
         const montoNum = parseFloat(monto);
-        const comisionRetiro = calcularComisionRetiro(montoNum);
-        const montoNetoAEnviar = montoNum - comisionRetiro;
-
-        if (montoNetoAEnviar <= 0) {
-            return res.status(400).json({ success: false, message: `El monto del retiro debe ser superior a la comisión ($${comisionRetiro.toFixed(2)}).` });
+        const COMISION = 1.0; // 1 USDT de comisión
+        const montoNeto = montoNum - COMISION;
+        if (montoNeto <= 0) {
+            return res.status(400).json({ success: false, message: 'El monto del retiro debe ser superior a la comisión ($1.00).' });
         }
 
         if (walletUser.usdt_balance < montoNum) {
-            return res.status(400).json({ success: false, message: 'Saldo insuficiente en tu monedero para este retiro.' });
+            return res.status(400).json({ success: false, message: 'Saldo insuficiente en tu monedero.' });
         }
 
-        // ==========================================
-        // 4. EJECUTAR TRANSFERENCIA REAL EN LA BLOCKCHAIN (POLYGON)
-        // ==========================================
-        const privateKeyCentral = process.env.PLATFORM_PRIVATE_KEY;
-        if (!privateKeyCentral) {
-            return res.status(500).json({ success: false, message: '❌ Error de configuración del servidor: Falta la clave privada de la plataforma.' });
-        }
-
-        const provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC_URL || 'https://polygon-mainnet.g.alchemy.com/v2/alch_QXifk1hC0lgox0-9mIbcR');
-        const walletCentral = new ethers.Wallet(privateKeyCentral, provider);
-
-        // Instanciar el contrato oficial de USDT en Polygon
-        const usdtContract = new ethers.Contract(POLYGON_USDT_CONTRACT, [
-            "function transfer(address to, uint256 amount) returns (bool)"
-        ], walletCentral);
-
-        // USDT en Polygon usa 6 decimales
-        const amountInUnits = ethers.parseUnits(montoNetoAEnviar.toFixed(6), 6);
-
-        console.log(`🚀 Iniciando envío blockchain de ${montoNetoAEnviar} USDT hacia ${cleanDestino}...`);
-        
-        // Enviar la transacción real a la red Polygon[cite: 5]
-        const tx = await usdtContract.transfer(cleanDestino, amountInUnits);
-        console.log(`⏳ Transacción enviada. Hash pendiente: ${tx.hash}`);
-
-        // Esperar la confirmación de la red (1 bloque)[cite: 5]
-        const receipt = await tx.wait();
-        
-        if (!receipt || receipt.status !== 1) {
-            return res.status(500).json({ success: false, message: '❌ La transacción de retiro falló en la blockchain de Polygon.' });
-        }
-
-        const txHashReal = tx.hash;
-        console.log(`✅ ¡Retiro confirmado en blockchain! Hash: ${txHashReal}`);
-
-        // 5. Descontar saldo localmente en la base de datos de manera atómica
+        // 4. Descontar saldo localmente en la base de datos
         await db.run('UPDATE wallets SET usdt_balance = usdt_balance - ? WHERE user_id = ?', [montoNum, usuario.id]);
 
         const referenciaRetiro = 'RET-' + Math.floor(100000 + Math.random() * 900000);
-        const ahora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
 
-        // Registrar la transacción guardando el hash oficial de salida[cite: 5]
-        await db.run(
-            'INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, reference_hash, fechaHora) VALUES (?, ?, ?, ?, ?, ?)',
-            [referenciaRetiro, montoNum, usuario.telefono, cleanDestino, txHashReal, ahora]
-        );
-
-        // Registrar comisión
-        await db.run(
-            'INSERT INTO comisiones (tipo, monto, referencia, fechaHora) VALUES (?, ?, ?, ?)',
-            ['binance', comisionRetiro, referenciaRetiro, ahora]
-        );
-
-        // Notificar por WhatsApp con su Hash incluido[cite: 5]
-        await enviarMensajeWhatsappSeguro(
-            usuario.telefono,
-            `✅ *¡RETIRO PROCESADO CON ÉXITO!*\n\nMonto enviado: $${montoNetoAEnviar.toFixed(2)} USDT\nComisión: $${comisionRetiro.toFixed(2)}\n🔗 *Hash:* ${txHashReal}\nRef: ${referenciaRetiro}`
-        );
-
-        // 6. Retornar éxito con todos los detalles al frontend
+        // 5. Retornar éxito para que dispares tu notificación de WhatsApp
         return res.json({
             success: true,
-            message: `¡Retiro de $${montoNetoAEnviar.toFixed(2)} USDT procesado y enviado a la red Polygon con éxito!`,
-            referencia: referenciaRetiro,
-            txHash: txHashReal
+            message: `¡Retiro de ${montoNeto} USDT procesado con éxito!`,
+            referencia: referenciaRetiro
         });
 
     } catch (error) {
-        console.error("⚠️ Error crítico en procesarRetiroHandler:", error);
-        return res.status(500).json({ success: false, message: `Error procesando el retiro en la red: ${error.message}` });
+        console.error("Error en procesarRetiroHandler:", error);
+        return res.status(500).json({ success: false, message: `Error en el servidor al procesar el retiro: ${error.message}` });
     }
 }
 // ==========================================
@@ -1202,99 +1160,91 @@ const enviarPagoHandler = async (req, res) => {
     }
 };
 
+
 // ==========================================
-// RECARGA AUTOMÁTICA ANCLADA A LA BLOCKCHAIN (WALLET INDIVIDUAL)
+// RECARGA DIRECTA A LA WALLET PERSONAL (SIN HASHES)
 // ==========================================
 const logicaRecargaHandler = async (req, res) => {
     let phoneNumber = (req.body.phoneNumber || req.body.telefono || req.body.phone || '').trim();
+    let amount = req.body.amount || req.body.monto || req.body.cantidad || req.body.valor;
+
+    const procesarConTelefono = async (telObjetivo) => {
+        const montoLimpio = parseFloat(amount);
+
+        if (!amount) {
+            return res.status(400).json({ success: false, message: 'El monto de recarga es obligatorio.' });
+        }
+
+        if (isNaN(montoLimpio) || montoLimpio < MONTO_MINIMO_RECARGA) {
+            return res.status(400).json({ success: false, message: `Monto mínimo de recarga: $${MONTO_MINIMO_RECARGA.toFixed(2)} USDT.` });
+        }
+
+        try {
+            const comisionAplicar = calcularComisionRecarga(montoLimpio);
+            const montoNetoAcreditar = montoLimpio - comisionAplicar;
+
+            let wallet = await db.get(`
+                SELECT wallets.id, wallets.usdt_balance, usuarios.telefono 
+                FROM usuarios 
+                LEFT JOIN wallets ON wallets.user_id = usuarios.id 
+                WHERE usuarios.telefono = ? OR usuarios.merchant_id = ?
+            `, [telObjetivo, telObjetivo]);
+
+            let walletId;
+            let saldoActual = 0.00;
+            let telReal = telObjetivo;
+
+            if (wallet && wallet.id) {
+                walletId = wallet.id;
+                saldoActual = wallet.usdt_balance;
+                telReal = wallet.telefono;
+            } else {
+                const user = await db.get('SELECT id, telefono FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telObjetivo, telObjetivo]);
+                if (!user) return res.status(400).json({ success: false, error: `Destinatario no registrado.` });
+                const newW = await db.run('INSERT INTO wallets (user_id, usdt_balance) VALUES (?, 0.00)', [user.id]);
+                walletId = newW.lastID;
+                telReal = user.telefono;
+            }
+
+            const nuevoSaldo = saldoActual + montoNetoAcreditar;
+            const referenciaGen = 'REC-' + Math.floor(100000 + Math.random() * 900000);
+            const ahora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
+
+            // Actualizar balance y registrar la transacción sin depender de hashes
+            await db.run('UPDATE wallets SET usdt_balance = ? WHERE id = ?', [nuevoSaldo, walletId]);
+            await db.run(`
+                INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, reference_hash, fechaHora) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            `, [referenciaGen, montoLimpio, 'DIRECTO_WALLET', telReal, referenciaGen, ahora]);
+            
+            await db.run(
+                'INSERT INTO comisiones (tipo, monto, referencia, fechaHora) VALUES (?, ?, ?, ?)',
+                ['binance', comisionAplicar, referenciaGen, ahora]
+            );
+
+            await enviarMensajeWhatsappSeguro(telReal, `¡RECARGA ACREDITADA CON ÉXITO! 📥\nMonto: $${montoLimpio.toFixed(2)}\nAcreditado: $${montoNetoAcreditar.toFixed(2)}\nRef: ${referenciaGen}`);
+
+            res.json({ 
+                success: true, 
+                message: `¡Recarga de $${montoLimpio.toFixed(2)} USDT procesada! Acreditados $${montoNetoAcreditar.toFixed(2)}. Ref: ${referenciaGen}`,
+                montoAcreditado: montoNetoAcreditar.toFixed(2),
+                comisionAplicada: comisionAplicar.toFixed(2),
+                referencia: referenciaGen
+            });
+        } catch (err) {
+            console.error("Error en recarga directa:", err.message);
+            return res.status(500).json({ success: false, error: "Error procesando recarga en la base de datos" });
+        }
+    };
 
     if (!phoneNumber) {
-        return res.status(400).json({ success: false, message: 'El número de teléfono es obligatorio.' });
-    }
-
-    try {
-        // 1. Buscar al usuario, su wallet asignada y su saldo interno actual en SQLite
-        const usuario = await db.get(`
-            SELECT usuarios.id, usuarios.telefono, usuarios.assigned_wallet, wallets.usdt_balance, wallets.id as wallet_id 
-            FROM usuarios 
-            LEFT JOIN wallets ON wallets.user_id = usuarios.id 
-            WHERE usuarios.telefono = ? OR usuarios.merchant_id = ?
-        `, [phoneNumber, phoneNumber]);
-
-        if (!usuario || !usuario.assigned_wallet) {
-            return res.status(400).json({ success: false, message: 'Usuario no encontrado o no tiene una wallet asignada.' });
-        }
-
-        // 2. Conectar a Polygon mediante Alchemy usando tu proveedor configurado
-        const provider = new ethers.JsonRpcProvider('https://polygon-mainnet.g.alchemy.com/v2/alh_QXifklhC8Igox8-9wTbcR');
-        const usdtContract = new ethers.Contract(POLYGON_USDT_CONTRACT, [
-            "function balanceOf(address owner) view returns (uint256)"
-        ], provider);
-
-        // 3. Consultar el balance real de USDT en la blockchain para la wallet individual del usuario
-        const balanceWei = await usdtContract.balanceOf(usuario.assigned_wallet);
-        const saldoRealBlockchain = parseFloat(ethers.formatUnits(balanceWei, 6)); // USDT en Polygon usa 6 decimales
-
-        const saldoInternoActual = usuario.usdt_balance || 0.00;
-
-        // 4. Verificar si hay fondos nuevos en la blockchain que aún no se hayan acreditado
-        if (saldoRealBlockchain <= saldoInternoActual) {
-            return res.json({
-                success: false,
-                message: `🔍 No se detectaron nuevos depósitos. Balance en tu wallet blockchain: $${saldoRealBlockchain.toFixed(2)} USDT. Transfiere USDT en red Polygon a tu dirección asignada para recargar.`
-            });
-        }
-
-        // Calcular el nuevo depósito detectado en la red
-        const montoNuevoDepositado = saldoRealBlockchain - saldoInternoActual;
-
-        if (montoNuevoDepositado < MONTO_MINIMO_RECARGA) {
-            return res.status(400).json({ 
-                success: false, 
-                message: `El depósito detectado es de $${montoNuevoDepositado.toFixed(2)}. El monto mínimo de recarga es $${MONTO_MINIMO_RECARGA.toFixed(2)} USDT.` 
-            });
-        }
-
-        // 5. Aplicar comisión de recarga y calcular neto a acreditar
-        const comisionAplicar = calcularComisionRecarga(montoNuevoDepositado);
-        const montoNetoAcreditar = montoNuevoDepositado - comisionAplicar;
-        const nuevoSaldoTotal = saldoInternoActual + montoNetoAcreditar;
-
-        const referenciaGen = 'REC-' + Math.floor(100000 + Math.random() * 900000);
-        const ahora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
-
-        // 6. Actualizar base de datos de manera limpia y segura
-        await db.run('UPDATE wallets SET usdt_balance = ? WHERE id = ?', [nuevoSaldoTotal, usuario.wallet_id]);
-        await db.run(`
-            INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, reference_hash, fechaHora) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        `, [referenciaGen, montoNuevoDepositado, usuario.assigned_wallet, usuario.telefono, referenciaGen, ahora]);
-        
-        await db.run(
-            'INSERT INTO comisiones (tipo, monto, referencia, fechaHora) VALUES (?, ?, ?, ?)',
-            ['binance', comisionAplicar, referenciaGen, ahora]
-        );
-
-        // 7. Notificar por WhatsApp de manera segura
-        await enviarMensajeWhatsappSeguro(
-            usuario.telefono, 
-            `¡RECARGA DETECTADA Y ACREDITADA! 🟢\n\n📥 Depositado: $${montoNuevoDepositado.toFixed(2)}\n⚙️ Comisión: $${comisionAplicar.toFixed(2)}\n💰 Acreditado: $${montoNetoAcreditar.toFixed(2)}\nRef: ${referenciaGen}`
-        );
-
-        res.json({ 
-            success: true, 
-            message: `¡Depósito de $${montoNuevoDepositado.toFixed(2)} USDT detectado en la blockchain! Acreditados $${montoNetoAcreditar.toFixed(2)}. Ref: ${referenciaGen}`,
-            montoAcreditado: montoNetoAcreditar.toFixed(2),
-            comisionAplicada: comisionAplicar.toFixed(2),
-            referencia: referenciaGen
-        });
-
-    } catch (err) {
-        console.error("Error en recarga amarrada a blockchain:", err.message);
-        return res.status(500).json({ success: false, error: "Error consultando el balance en la blockchain de Polygon." });
+        const rowUser = await db.get('SELECT telefono FROM usuarios ORDER BY id DESC LIMIT 1');
+        if (rowUser && rowUser.telefono) await procesarConTelefono(rowUser.telefono);
+        else return res.status(400).json({ success: false, message: 'No hay usuarios registrados.' });
+    } else {
+        await procesarConTelefono(phoneNumber);
     }
 };
-
 
 app.post('/api/enviar-pago', limiterPagos, enviarPagoHandler);
 app.post('/procesar-pago', limiterPagos, enviarPagoHandler);
@@ -1303,28 +1253,18 @@ app.post('/api/recargar', limiterPagos, logicaRecargaHandler);
 app.post('/recargar', limiterPagos, logicaRecargaHandler);
 
 // ==========================================
-// MANTENIMIENTO AUTOMÁTICO (LIMPIEZA DE REGISTROS > 50 DÍAS)
+// MANTENIMIENTO AUTOMÁTICO
 // ==========================================
 setInterval(async () => {
     try {
         if (db) {
-            // Depura la tabla transacciones eliminando registros cuya fecha tenga más de 50 días de antigüedad
-            // Usamos datetime('now') comparado con el formato compatible de SQLite
-            await db.run(`
-                DELETE FROM transacciones 
-                WHERE datetime(SUBSTR(fechahora, 7, 4) || '-' || SUBSTR(fechahora, 4, 2) || '-' || SUBSTR(fechahora, 1, 2)) < datetime('now', '-50 days');
-            `);
-
-            // Compacta la base de datos para liberar espacio físico en disco y mantenerla ligera
+            await db.run("DELETE FROM transacciones WHERE fechaHora < datetime('now', '-60 days')");
             await db.run("VACUUM;");
-            console.log("🧹 Mantenimiento automático ejecutado: Transacciones mayores a 50 días depuradas con éxito.");
         }
-    } catch (e) {
-        console.error("⚠️ Error en el mantenimiento automático:", e.message);
-    }
+    } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Servidor de PagoMóvil USDT corriendo en el puerto ${PORT}`);
+    console.log(`🚀 Servidor de PagoMóvil USDT corriendo en el puerto ${PORT}`);
 });
