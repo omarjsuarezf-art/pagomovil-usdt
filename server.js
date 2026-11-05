@@ -925,62 +925,7 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
         return res.status(500).json({ success: false, message: 'Error interno al procesar la solicitud.' });
     }
 });
-} else {
-        // ========================================================
-        // BLOQUE BLINDADO: VERIFICACIÓN DOBLE CONTRA DUPLICADOS
-        // ========================================================
-        const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telefono]);
 
-        if (usuarioExistenteDuplicado) {
-            const mensajeLoginDuplicado = `¡Acceso Recuperado en PagoMóvilUSDT! 🟢\n\nTu línea ya estaba registrada. Se mantiene tu monedero exclusivo de por vida.\n\n🔢 *Código de verificación:* *${codigoVerificacion}*`;
-            await enviarMensajeWhatsappSeguro(telefono, mensajeLoginDuplicado);
-
-            return res.json({ 
-                success: true, 
-                message: '¡El número ya estaba registrado! Se ha enviado tu código de acceso y tu cuenta original está a salvo.' 
-            });
-        }
-
-        // Si es 100% nuevo, creamos su única wallet de por vida de forma segura y exclusiva
-        let walletGenerada = ethers.Wallet.createRandom();
-        
-        // Verificación extra para asegurar que la wallet no exista previamente en otro registro
-        let walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
-        while (walletRepetida) {
-            walletGenerada = ethers.Wallet.createRandom();
-            walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
-        }
-
-        const nuevaWalletCrypto = {
-            address: walletGenerada.address,
-            privatekey: walletGenerada.privateKey
-        };
-
-        await db.run(
-            `INSERT INTO usuarios (telefono, pinSeguridad, accountType, dailyLimit, metodoVinculado, assigned_wallet, private_key) VALUES (?, ?, 'natural', 1000.00, 0, ?, ?)`,
-            [telefono, pinSeguridad, nuevaWalletCrypto.address, nuevaWalletCrypto.privateKey]
-        );
-
-        const userRecord = await db.get('SELECT id FROM usuarios WHERE telefono = ?', [telefono]);
-        if (userRecord) {
-            const existingWallet = await db.get('SELECT id FROM wallets WHERE user_id = ?', [userRecord.id]);
-            if (!existingWallet) {
-                await db.run('INSERT INTO wallets (user_id, usdt_balance) VALUES (?, 0.00)', [userRecord.id]);
-            }
-        }
-
-        const mensajeBienvenida = `¡Bienvenido a PagoMóvilUSDT! 🟢\n\nEstimado usuario, su registro ha sido exitoso.\n\n🔑 PIN: ${pinSeguridad}\n📥 Tu Wallet Polygon Asignada (De por vida):\n${nuevaWalletCrypto.address}\n\n🛡️ Cuenta vinculada de forma exclusiva a tu número.`;
-        
-        await enviarMensajeWhatsappSeguro(telefono, mensajeBienvenida);
-
-        return res.json({
-            success: true,
-            bloqueoRegistro: true,
-            message: '¡Bienvenido! Su registro inicial fue exitoso con su wallet única y permanente.',
-            telefono: telefono,
-            assigned_wallet: nuevaWalletCrypto.address
-        });
-    }
       
 // ==========================================
 // CAMBIO A CUENTA COMERCIAL
