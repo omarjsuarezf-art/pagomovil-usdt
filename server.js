@@ -816,7 +816,7 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
     if (!telefono || !pinSeguridad) {
         return res.status(400).json({ success: false, message: 'El teléfono y el PIN de seguridad son obligatorios.' });
     }
-// FILTRO ANTI-CHOROS Y BOTS: Solo prefijos móviles reales de Venezuela
+
     const telefonoLimpio = telefono.replace(/\D/g, '');
     const regexMovilVenezuela = /^0?(412|414|424|416|426)\d{7}$/;
     
@@ -826,15 +826,12 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             message: '❌ Prefijo o número móvil inválido. En Venezuela solo se permiten operadoras oficiales.' 
         });
     }
-  
 
     try {
         const usuarioExistente = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
-
         const codigoVerificacion = Math.floor(100000 + Math.random() * 900000).toString();
 
         if (usuarioExistente) {
-            // Verificar PIN (admite PIN fijo de 4 dígitos o PIN temporal de 6 dígitos)
             let pinValido = false;
             if (pinSeguridad.length === 6) {
                 const registroOTP = codigosRecuperacion.get(usuarioExistente.telefono);
@@ -871,6 +868,63 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
                 success: true, 
                 message: '¡Acceso autorizado y código enviado por WhatsApp con éxito!'
             });
+        }
+
+        // Validación de duplicados sin necesidad de else enredado
+        const usuarioExistenteDuplicado = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telefono]);
+
+        if (usuarioExistenteDuplicado) {
+            const mensajeLoginDuplicado = `¡Acceso Recuperado en PagoMóvilUSDT! 🟢\n\nTu línea ya estaba registrada. Se mantiene tu monedero exclusivo de por vida.\n\n🔢 *Código de verificación:* *${codigoVerificacion}*`;
+            await enviarMensajeWhatsappSeguro(telefono, mensajeLoginDuplicado);
+
+            return res.json({ 
+                success: true, 
+                message: '¡El número ya estaba registrado! Se ha enviado tu código de acceso y tu cuenta original está a salvo.' 
+            });
+        }
+
+        let walletGenerada = ethers.Wallet.createRandom();
+        let walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
+        while (walletRepetida) {
+            walletGenerada = ethers.Wallet.createRandom();
+            walletRepetida = await db.get('SELECT id FROM usuarios WHERE assigned_wallet = ?', [walletGenerada.address]);
+        }
+
+        const nuevaWalletCrypto = {
+            address: walletGenerada.address,
+            privatekey: walletGenerada.privateKey
+        };
+
+        await db.run(
+            `INSERT INTO usuarios (telefono, pinSeguridad, accountType, dailyLimit, metodoVinculado, assigned_wallet, private_key) VALUES (?, ?, 'natural', 1000.00, 0, ?, ?)`,
+            [telefono, pinSeguridad, nuevaWalletCrypto.address, nuevaWalletCrypto.privateKey]
+        );
+
+        const userRecord = await db.get('SELECT id FROM usuarios WHERE telefono = ?', [telefono]);
+        if (userRecord) {
+            const existingWallet = await db.get('SELECT id FROM wallets WHERE user_id = ?', [userRecord.id]);
+            if (!existingWallet) {
+                await db.run('INSERT INTO wallets (user_id, usdt_balance) VALUES (?, 0.00)', [userRecord.id]);
+            }
+        }
+
+        const mensajeBienvenida = `¡Bienvenido a PagoMóvilUSDT! 🟢\n\nEstimado usuario, su registro ha sido exitoso.\n\n🔑 PIN: ${pinSeguridad}\n📥 Tu Wallet Polygon Asignada (De por vida):\n${nuevaWalletCrypto.address}\n\n🛡️ Cuenta vinculada de forma exclusiva a tu número.`;
+        
+        await enviarMensajeWhatsappSeguro(telefono, mensajeBienvenida);
+
+        return res.json({
+            success: true,
+            bloqueoRegistro: true,
+            message: '¡Bienvenido! Su registro inicial fue exitoso con su wallet única y permanente.',
+            telefono: telefono,
+            assigned_wallet: nuevaWalletCrypto.address
+        });
+
+    } catch (err) {
+        console.error('Error en /api/enviar-codigo:', err);
+        return res.status(500).json({ success: false, message: 'Error interno al procesar la solicitud.' });
+    }
+});
 } else {
         // ========================================================
         // BLOQUE BLINDADO: VERIFICACIÓN DOBLE CONTRA DUPLICADOS
