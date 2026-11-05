@@ -125,10 +125,17 @@ async function inicializarBaseDatos() {
         console.error('❌ Error al inicializar SQLite:', err.message);
     }
 }
+
 // REGLA DE ORO: Índice único para que SQLite prohíba 100% que dos usuarios tengan la misma wallet
-try { 
-    await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);"); 
+try {  
+    await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);");  
 } catch (e) {}
+
+} catch (err) {
+    console.error('X Error al inicializar SQLite:', err.message);
+}
+}
+
 inicializarBaseDatos();
 
 // ==========================================
