@@ -17,14 +17,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/omarjsuarezf-art/PagoMovilUSDT.git"
+    "url": "git+https://github.com/omarjsuarezf-art/pagomovil-usdt.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/omarjsuarezf-art/PagoMovilUSDT/issues"
+    "url": "https://github.com/omarjsuarezf-art/pagomovil-usdt/issues"
   },
-  "homepage": "https://github.com/omarjsuarezf-art/PagoMovilUSDT#readme"
+  "homepage": "https://github.com/omarjsuarezf-art/pagomovil-usdt#readme"
 }
