@@ -816,7 +816,7 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
     if (!telefono || !pinSeguridad) {
         return res.status(400).json({ success: false, message: 'El teléfono y el PIN de seguridad son obligatorios.' });
     }
-// FILTRO ANTI-CHOROS Y BOTS: Solo prefijos móviles reales de Venezuela
+
     const telefonoLimpio = telefono.replace(/\D/g, '');
     const regexMovilVenezuela = /^0?(412|414|424|416|426)\d{7}$/;
     
@@ -826,15 +826,12 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             message: '❌ Prefijo o número móvil inválido. En Venezuela solo se permiten operadoras oficiales.' 
         });
     }
-  
 
     try {
         const usuarioExistente = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
-
         const codigoVerificacion = Math.floor(100000 + Math.random() * 900000).toString();
 
         if (usuarioExistente) {
-            // Verificar PIN (admite PIN fijo de 4 dígitos o PIN temporal de 6 dígitos)
             let pinValido = false;
             if (pinSeguridad.length === 6) {
                 const registroOTP = codigosRecuperacion.get(usuarioExistente.telefono);
@@ -871,6 +868,13 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
                 success: true, 
                 message: '¡Acceso autorizado y código enviado por WhatsApp con éxito!'
             });
+        } else {
+            return res.status(404).json({ success: false, message: '❌ El número no está registrado. Debe registrarse primero.' });
+        }
+    } catch (err) {
+        return res.status(500).json({ success: false, message: '❌ Error interno al procesar la solicitud.' });
+    }
+});
 
       
 // ==========================================
