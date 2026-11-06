@@ -121,14 +121,16 @@ async function inicializarBaseDatos() {
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN assigned_wallet TEXT;"); } catch (e) {}
         try { await db.exec("ALTER TABLE usuarios ADD COLUMN private_key TEXT;"); } catch (e) {}
 
+        // REGLA DE ORO: Índice único para que SQLite prohíba 100% que dos usuarios tengan la misma wallet
+        try {  
+            await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);");  
+        } catch (e) {}
+
     } catch (err) {
         console.error('❌ Error al inicializar SQLite:', err.message);
     }
 }
-// REGLA DE ORO: Índice único para que SQLite prohíba 100% que dos usuarios tengan la misma wallet
-try { 
-    await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_wallet ON usuarios(assigned_wallet);"); 
-} catch (e) {}
+
 inicializarBaseDatos();
 
 // ==========================================
