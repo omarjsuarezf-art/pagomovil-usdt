@@ -875,7 +875,13 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
                     codigosRecuperacion.delete(usuarioExistente.telefono);
                 }
             }
-            if (!pinValido && usuarioExistente.pinSeguridad && usuarioExistente.pinSeguridad === pinSeguridad) {
+            if (!pinValido && !usuarioExistente.pinSeguridad && /^\d{4}$/.test(pinSeguridad)) {
+          await db.run('UPDATE usuarios SET pinSeguridad = ? WHERE id = ?', [pinSeguridad, usuarioExistente.id]);
+          usuarioExistente.pinSeguridad = pinSeguridad;
+          pinValido = true;
+        }
+
+        if (!pinValido && usuarioExistente.pinSeguridad && usuarioExistente.pinSeguridad === pinSeguridad) {
                 pinValido = true;
             }
 
