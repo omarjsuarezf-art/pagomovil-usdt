@@ -536,7 +536,7 @@ app.post('/api/login', limiterPagos, async (req, res) => {
     try {
         const usuario = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
         if (!usuario) {
-            return res.status(404).json({ success: false, message: '❌ El número no está registrado. Debe registrarse primero.' });
+            return res.status(404).json({ success: false, message: '❌ El número no está registrado. Complete primero su registro y vinculación abajo (Cédula, Método y Correo/Cuenta) para crear su cuenta.' });
         }
 
         // VALIDACIÓN DE PIN: Soporta PIN fijo de 4 dígitos O PIN temporal de 6 dígitos activo en memoria
@@ -563,7 +563,7 @@ app.post('/api/login', limiterPagos, async (req, res) => {
             return res.status(403).json({
                 success: false,
                 bloqueoRegistro: true,
-                message: '❌ Acceso restringido. Debe vincular obligatoriamente su Cédula y Monedero/Cuenta de recepción para operar.',
+                message: '❌ Acceso restringido. Para continuar, complete abajo su Cédula, Método/Exchange y Correo/Cuenta de recepción.',
                 telefono: usuario.telefono
             });
         }
