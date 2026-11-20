@@ -711,7 +711,42 @@ app.post('/api/registrar-metodos', limiterPagos, async (req, res) => {
         );
 
         if (telefono) {
-            await db.run('UPDATE usuarios SET metodoVinculado = 1 WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
+            const telLimpio = String(telefono).replace(/\D/g, '');
+          const conflictoCedula = await db.get(
+            'SELECT id, telefono FROM usuarios WHERE cedula = ? AND telefono != ? AND telefono != ?',
+            [cedulaLimpia, telefono, telLimpio]
+          );
+          if (conflictoCedula) {
+            return res.status(409).json({
+              success: false,
+              message: 'Esta cédula ya se encuentra vinculada a otro número de teléfono.'
+            });
+          }
+
+          let usuarioActual = await db.get(
+            'SELECT * FROM usuarios WHERE telefono = ? OR telefono = ? OR merchant_id = ?',
+            [telefono, telLimpio, telefono]
+          );
+
+          if (!usuarioActual) {
+            await db.run(
+              'INSERT INTO usuarios (telefono, cedula, correo, metodoVinculado) VALUES (?, ?, ?, 1)',
+              [telLimpio, cedulaLimpia, correoExtraido || null]
+            );
+            usuarioActual = await db.get('SELECT * FROM usuarios WHERE telefono = ?', [telLimpio]);
+          } else {
+            await db.run(
+              'UPDATE usuarios SET metodoVinculado = 1, cedula = COALESCE(cedula, ?), correo = COALESCE(correo, ?) WHERE id = ?',
+              [cedulaLimpia, correoExtraido || null, usuarioActual.id]
+            );
+          }
+
+          if (usuarioActual && usuarioActual.id) {
+            const walletExiste = await db.get('SELECT id FROM wallets WHERE user_id = ?', [usuarioActual.id]);
+            if (!walletExiste) {
+              await db.run('INSERT INTO wallets (user_id, usdt_balance) VALUES (?, 0.00)', [usuarioActual.id]);
+            }
+          }
 
             if (correoExtraido) {
                 const htmlBienvenida = `
