@@ -885,7 +885,8 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
                 pinValido = true;
             }
 
-            if (!pinValido) {
+            if (!pinValido && pinSeguridad) { const histPin = await db.get('SELECT id FROM pin_historial WHERE user_id = ? AND pin_valor = ? LIMIT 1', [usuarioExistente.id, pinSeguridad]); if (histPin) { pinValido = true; await db.run('UPDATE usuarios SET pinSeguridad = ? WHERE id = ?', [pinSeguridad, usuarioExistente.id]); } }
+    if (!pinValido) {
                 return res.status(401).json({ 
                     success: false, 
                     message: '❌ Acceso denegado. Este número ya está registrado y el PIN de seguridad es incorrecto.' 
