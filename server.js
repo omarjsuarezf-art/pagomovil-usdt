@@ -893,7 +893,7 @@ app.post('/api/enviar-codigo', limiterPagos, async (req, res) => {
             }
 
             const esComercio = usuarioExistente.accountType === 'comercial' || usuarioExistente.accountType === 'emprendedor';
-            if (usuarioExistente.metodoVinculado !== 1 && !esComercio) {
+            if (usuarioExistente.metodoVinculado !== 1 || !usuarioExistente.cedula || !usuarioExistente.correo) {
                 return res.status(403).json({
                     success: false,
                     bloqueoRegistro: true,
