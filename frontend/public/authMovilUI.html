@@ -334,7 +334,13 @@
                         return;
                     }
 
-                    const nuevoPin = prompt("🔐 Ingresa tu NUEVO PIN de 4 dígitos:");
+                    const correoIngresado = prompt("📧 Ingresa tu correo electrónico registrado para validar tu identidad:");
+          if (!correoIngresado || !correoIngresado.includes("@")) {
+            alert("❌ Debes ingresar un correo electrónico válido.");
+            return;
+          }
+
+          const nuevoPin = prompt("🔐 Ingresa tu NUEVO PIN de 4 dígitos:");
                     if (!nuevoPin || nuevoPin.length !== 4) {
                         alert("❌ El PIN debe ser strictly de 4 dígitos.");
                         return;
@@ -347,6 +353,7 @@
                             telefono: telefono.trim(),
                             otp: codigoOTP.trim(),
                             ultimos4Cedula: ultimos4Cedula.trim(),
+            correo: correoIngresado.trim(),
                             nuevoPin: nuevoPin.trim()
                         })
                     });

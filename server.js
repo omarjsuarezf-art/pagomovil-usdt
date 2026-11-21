@@ -406,6 +406,31 @@ app.get('/admin', (req, res) => {
 // ==========================================
 // RUTAS DE RECUPERACIÓN DE PIN (BLINDADAS CON CÉDULA Y OTP)
 // ==========================================
+app.post('/api/recuperar-pin-request', limiterPagos, async (req, res) => {
+  try {
+    const telefono = (req.body.telefono || req.body.telefonoUsuario || '').trim();
+    if (!telefono) {
+      return res.status(400).json({ success: false, message: 'El número de teléfono es obligatorio.' });
+    }
+    const usuario = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
+    if (!usuario) {
+      return res.status(404).json({ success: false, message: 'El número no está registrado en el sistema.' });
+    }
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    codigosRecuperacion.set(usuario.telefono, { otp, timestamp: Date.now() });
+    if (typeof enviarMensajeWhatsappSeguro === 'function') {
+      await enviarMensajeWhatsappSeguro(
+        usuario.telefono,
+        `🔐 *RECUPERACIÓN DE PIN*\n\nTu código de verificación de 6 dígitos es: *${otp}*\nVálido por 5 minutos.`
+      );
+    }
+    return res.json({ success: true, message: 'Código OTP enviado por WhatsApp.' });
+  } catch (err) {
+    console.error('Error en /api/recuperar-pin-request:', err);
+    return res.status(500).json({ success: false, message: 'Error interno al solicitar recuperación de PIN.' });
+  }
+});
+
 app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
     const telefono = (req.body.telefono || '').trim();
     const otp = (req.body.otp || '').trim();
@@ -457,35 +482,28 @@ app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
             });
         }
 
-        // Generar PIN temporal de 6 dígitos seguro que viaja al correo
-        const nuevoPinTemporal = Math.floor(100000 + Math.random() * 900000).toString();
-
+        // Aviso de seguridad al correo (sin pisar el nuevo PIN de 4 dígitos)
         const mensajeHtmlCorreo = `
-            <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;">
-              <h2 style="color: #2b6cb0; text-align: center;">🔐 Solicitud de Cambio de Seguridad</h2>
-              <p>Hola,</p>
-              <p>Has solicitado un cambio de PIN en tu cuenta de PagoMovil USDT.</p>
-              <p>Tu nuevo código temporal de acceso es:</p>
-              <div style="background-color: #ebf8ff; padding: 15px; text-align: center; font-size: 26px; font-weight: bold; color: #2b6cb0; border-radius: 6px; margin: 20px 0;">
-                ${nuevoPinTemporal}
-              </div>
-              <p style="font-size: 13px; color: #666;">Por seguridad, este código es exclusivo para tu validación. Si no solicitaste este cambio, contacta a soporte de inmediato.</p>
-            </div>
+          <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;">
+            <h2 style="color: #2b6cb0; text-align: center;">Alerta de Seguridad - PagoMovil USDT</h2>
+            <p>Hola,</p>
+            <p>Se ha restablecido el PIN de seguridad de tu cuenta.</p>
+            <p>Si fuiste tú quien realizó este cambio, ya puedes ingresar con tu nuevo PIN sin inconvenientes.</p>
+            <p style="color: #b91c1c; font-weight: bold;">Si NO reconoces esta actividad, dirígete de inmediato al bot de soporte para proteger tu cuenta.</p>
+          </div>
         `;
-
-        await enviarCorreoResend(correoRegistrado, 'Tu nuevo código de seguridad - PagoMovil USDT', mensajeHtmlCorreo);
-
-        // Blanqueo seguro: actualizamos usando el PIN temporal generado
-        await db.run('UPDATE usuarios SET pinSeguridad = ? WHERE id = ?', [nuevoPinTemporal, usuario.id]);
-        
+        if (typeof enviarCorreoResend === 'function') {
+          await enviarCorreoResend(correoRegistrado, 'Alerta de seguridad: cambio de PIN en PagoMovil USDT', mensajeHtmlCorreo);
+        }
+        await db.run('UPDATE usuarios SET pinSeguridad = ? WHERE id = ?', [nuevoPin, usuario.id]);
         codigosRecuperacion.delete(telefono);
 
         await enviarMensajeWhatsappSeguro(
             usuario.telefono,
-            `✅ *SEGURIDAD ACTUALIZADA*\n\nTu solicitud de cambio ha sido procesada y la nueva credencial temporal ha sido enviada a tu correo electrónico registrado.`
+            `✅ *SEGURIDAD ACTUALIZADA*\n\nTu solicitud de cambio ha sido procesada y se envió una alerta de seguridad a tu correo electrónico registrado.`
         );
 
-        return res.json({ success: true, message: '¡PIN restablecido con éxito y enviado a tu correo!' });
+        return res.json({ success: true, message: '¡PIN restablecido con éxito y se envió la alerta a tu correo!' });
     } catch (err) {
         console.error('Error al confirmar recuperación de PIN:', err);
         return res.status(500).json({ success: false, message: 'Error interno al procesar el cambio de PIN.' });
