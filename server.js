@@ -1198,8 +1198,12 @@ const enviarPagoHandler = async (req, res) => {
 
         // Notificar por WhatsApp opcionalmente si está disponible
         await enviarMensajeWhatsappSeguro(
-            receptor.telefono,
-            `📥 *¡PAGO RECIBIDO!*\n\nHas recibido $${montoNum.toFixed(2)} USDT de parte de ${emisor.telefono}.\nRef: ${referenciaPago}`
+          receptor.telefono,
+          `🟢 *PAGO RECIBIDO*\n\nMonto: ${montoNum.toFixed(2)} USDT\nDe: ${emisor.telefono}\nRef: ${referenciaPago}`
+        );
+        await enviarMensajeWhatsappSeguro(
+          emisor.telefono,
+          `🔴 *PAGO ENVIADO*\n\nMonto: ${montoNum.toFixed(2)} USDT\nPara: ${receptor.telefono}\nRef: ${referenciaPago}`
         );
 
         return res.json({
