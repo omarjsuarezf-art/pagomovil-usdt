@@ -891,5 +891,52 @@
 
         window.onload = cargarDatosPanel;
     </script>
+
+<!-- CASILLA COMPROBANTE DE RETIRO AL PIE DE PAGINA -->
+<div id="casillaComprobanteRetiro" style="display:none;max-width:680px;margin:24px auto 32px;padding:16px 18px;border-radius:14px;background:#0b1320;border:1px solid #10b981;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 25px rgba(0,0,0,0.35);">
+  <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(148,163,184,0.2);padding-bottom:8px;margin-bottom:10px;">
+    <strong style="color:#34d399;font-size:14px;">COMPROBANTE DE RETIRO VERIFICADO</strong>
+    <span id="retiroCompFecha" style="font-size:12px;color:#94a3b8;">--</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;font-size:13px;">
+    <div><span style="color:#94a3b8;display:block;font-size:11px;">HASH / REFERENCIA</span><code id="retiroCompHash" style="color:#6ee7b7;word-break:break-all;">--</code></div>
+    <div><span style="color:#94a3b8;display:block;font-size:11px;">SALDO RETIRADO</span><strong id="retiroCompMonto" style="color:#ffffff;">0.00 USDT</strong></div>
+    <div><span style="color:#94a3b8;display:block;font-size:11px;">SALDO RESTANTE</span><strong id="retiroCompRestante" style="color:#fbbf24;">0.00 USDT</strong></div>
+    <div><span style="color:#94a3b8;display:block;font-size:11px;">DESTINO</span><code id="retiroCompDestino" style="color:#cbd5e1;word-break:break-all;">--</code></div>
+  </div>
+</div>
+<script>
+(function(){
+  if(window.__retiroCompHooked) return;
+  window.__retiroCompHooked = true;
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async function(...args){
+    const resp = await origFetch(...args);
+    try {
+      const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
+      if(url.includes("/api/procesar-retiro")){
+        const clone = resp.clone();
+        const data = await clone.json().catch(()=>null);
+        if(data && data.success){
+          const box = document.getElementById("casillaComprobanteRetiro");
+          if(box){
+            document.getElementById("retiroCompFecha").textContent = data.fechaHora || new Date().toLocaleString();
+            document.getElementById("retiroCompHash").textContent = data.hashRetiro || data.txHash || data.referencia || "--";
+            const retirado = Number(data.saldoRetirado ?? data.montoSolicitado ?? data.montoNeto ?? 0).toFixed(2);
+            document.getElementById("retiroCompMonto").textContent = retirado + " USDT";
+            const restante = data.saldoRestante !== undefined ? Number(data.saldoRestante).toFixed(2) + " USDT" : "Actualizado";
+            document.getElementById("retiroCompRestante").textContent = restante;
+            document.getElementById("retiroCompDestino").textContent = data.direccionDestino || "--";
+            box.style.display = "block";
+            box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+        }
+      }
+    } catch(e){}
+    return resp;
+  };
+})();
+</script>
+
 </body>
 </html>

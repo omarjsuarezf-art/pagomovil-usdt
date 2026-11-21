@@ -1106,13 +1106,32 @@ async function procesarRetiroHandler(req, res) {
         await db.run('UPDATE wallets SET usdt_balance = usdt_balance - ? WHERE user_id = ?', [montoNum, usuario.id]);
 
         const referenciaRetiro = 'RET-' + Math.floor(100000 + Math.random() * 900000);
+      const hashRetiro = '0xRET' + require("crypto").createHash("sha256").update(`${referenciaRetiro}|${usuario.telefono}|${direccionDestino}|${montoNum}|${Date.now()}`).digest("hex").slice(0, 40);
+      const fechaHoraRetiro = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
+      const saldoAnteriorRetiro = Number(walletUser.usdt_balance || 0);
+      const saldoRestanteRetiro = Math.max(0, saldoAnteriorRetiro - montoNum);
 
-        // 5. Retornar éxito para que dispares tu notificación de WhatsApp
-        return res.json({
-            success: true,
-            message: `¡Retiro de ${montoNeto} USDT procesado con éxito!`,
-            referencia: referenciaRetiro
-        });
+      await db.run(
+        'INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, reference_hash, fechaHora) VALUES (?, ?, ?, ?, ?, ?)',
+        [referenciaRetiro, montoNum, usuario.telefono, direccionDestino.trim(), hashRetiro, fechaHoraRetiro]
+      );
+
+      // 5. Retornar éxito con detalle completo para comprobante y verificación
+      return res.json({
+        success: true,
+        message: `Retiro de $${montoNeto.toFixed(2)} USDT procesado con éxito!`,
+        referencia: referenciaRetiro,
+        hashRetiro: hashRetiro,
+        txHash: hashRetiro,
+        montoSolicitado: Number(montoNum.toFixed(2)),
+        comision: Number(COMISION.toFixed(2)),
+        montoNeto: Number(montoNeto.toFixed(2)),
+        saldoRetirado: Number(montoNum.toFixed(2)),
+        saldoAnterior: Number(saldoAnteriorRetiro.toFixed(2)),
+        saldoRestante: Number(saldoRestanteRetiro.toFixed(2)),
+        direccionDestino: direccionDestino.trim(),
+        fechaHora: fechaHoraRetiro
+      });
 
     } catch (error) {
         console.error("Error en procesarRetiroHandler:", error);
