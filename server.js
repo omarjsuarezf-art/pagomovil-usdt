@@ -1143,9 +1143,10 @@ async function procesarRetiroHandler(req, res) {
 // ==========================================
 const enviarPagoHandler = async (req, res) => {
     try {
-        const { telefonoEmisor, pinSeguridad, telefonoDestino, monto } = req.body;
+        const { telefonoEmisor, pinSeguridad, telefonoDestino, telefonoComercio, monto } = req.body;
+    const destinoFinal = (telefonoDestino || telefonoComercio || "").trim();
 
-        if (!telefonoEmisor || !pinSeguridad || !telefonoDestino || !monto) {
+        if (!telefonoEmisor || !pinSeguridad || !destinoFinal || !monto) {
             return res.status(400).json({ success: false, message: 'Faltan datos obligatorios para el envío.' });
         }
 
@@ -1167,7 +1168,7 @@ const enviarPagoHandler = async (req, res) => {
         }
 
         // 3. Validar destinatario (puede ser teléfono o merchant_id)
-        const receptor = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefonoDestino, telefonoDestino]);
+        const receptor = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [destinoFinal, destinoFinal]);
         if (!receptor) {
             return res.status(400).json({ success: false, message: 'El usuario destinatario no existe en la plataforma.' });
         }
@@ -1191,7 +1192,7 @@ const enviarPagoHandler = async (req, res) => {
 
         // Registrar transacción
         await db.run(
-            'INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, fechaHora) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO transacciones (referencia, monto, telefonoEmisor, destinoFinal, fechaHora) VALUES (?, ?, ?, ?, ?)',
             [referenciaPago, montoNum, emisor.telefono, receptor.telefono, ahora]
         );
 
@@ -1279,7 +1280,7 @@ const refPolygon = `POLY-${userWalletInfo.assigned_wallet.slice(-6).toUpperCase(
             // Actualizar balance y registrar la transacción sin depender de hashes
             await db.run('UPDATE wallets SET usdt_balance = ? WHERE id = ?', [nuevoSaldo, walletId]);
             await db.run(`
-                INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, reference_hash, fechaHora) 
+                INSERT INTO transacciones (referencia, monto, telefonoEmisor, destinoFinal, reference_hash, fechaHora) 
                 VALUES (?, ?, ?, ?, ?, ?)
             `, [refPolygon, montoLimpio, userWalletInfo.assigned_wallet, telReal, refPolygon, ahora]);
             
