@@ -887,7 +887,7 @@
                 const res = await fetch('/api/enviar-pago', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ telefonoEmisor, telefonoComercio, montoUSDT: monto, pinSeguridad: pinSeguridad.trim() })
+                    body: JSON.stringify({ telefonoEmisor, telefonoComercio, monto: monto, montoUSDT: monto, pinSeguridad: pinSeguridad.trim() })
                 });
                 const data = await res.json();
                 
