@@ -758,22 +758,30 @@
     </script>
 
 <!-- CASILLA COMPROBANTE DE RETIRO AL PIE DE PAGINA -->
-<div id="casillaComprobanteRetiro" style="display:none;width:100%;max-width:460px;margin:16px auto 28px;padding:12px 14px;box-sizing:border-box;border-radius:14px;background:#0b1320;border:1px solid #10b981;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 10px 25px rgba(0,0,0,0.35);">
-  <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(148,163,184,0.2);padding-bottom:8px;margin-bottom:10px;">
-    <strong style="color:#34d399;font-size:14px;">COMPROBANTE DE RETIRO VERIFICADO</strong>
-    <span id="retiroCompFecha" style="font-size:12px;color:#94a3b8;">--</span>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;font-size:13px;">
-    <div><span style="color:#94a3b8;display:block;font-size:11px;">HASH / REFERENCIA</span><code id="retiroCompHash" style="color:#6ee7b7;word-break:break-all;">--</code></div>
-    <div><span style="color:#94a3b8;display:block;font-size:11px;">SALDO RETIRADO</span><strong id="retiroCompMonto" style="color:#ffffff;">0.00 USDT</strong></div>
-    <div><span style="color:#94a3b8;display:block;font-size:11px;">SALDO RESTANTE</span><strong id="retiroCompRestante" style="color:#fbbf24;">0.00 USDT</strong></div>
-    <div><span style="color:#94a3b8;display:block;font-size:11px;">DESTINO</span><code id="retiroCompDestino" style="color:#cbd5e1;word-break:break-all;">--</code></div>
-  </div>
-</div>
+v>
 <script>
 (function(){
   if(window.__retiroCompHooked) return;
   window.__retiroCompHooked = true;
+  const STORAGE_KEY = "pm_usdt_comprobantes_retiro_v1";
+  function leerHistorial(){ try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch(e){ return []; } }
+  function guardarHistorial(items){ try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, 15))); } catch(e){} }
+  function renderHistorial(){
+    const lista = document.getElementById("listaComprobantesRetiro");
+    const conteo = document.getElementById("conteoComprobantesRetiro");
+    if(!lista || !conteo) return;
+    const items = leerHistorial();
+    conteo.textContent = String(items.length);
+    if(!items.length){ lista.innerHTML = '<div style="font-size:11px;color:#64748b;">Aún no hay comprobantes guardados en este dispositivo.</div>'; return; }
+    lista.innerHTML = items.map(it => '<div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:7px 9px;font-size:11px;display:flex;flex-direction:column;gap:3px;"><div style="display:flex;justify-content:space-between;gap:8px;"><strong style="color:#34d399;">-' + it.monto + '</strong><span style="color:#94a3b8;font-size:10px;">' + it.fecha + '</span></div><code style="color:#6ee7b7;word-break:break-all;font-size:10px;">' + it.hash + '</code><span style="color:#cbd5e1;word-break:break-all;font-size:10px;">Destino: ' + it.destino + '</span></div>').join("");
+  }
+  document.addEventListener("DOMContentLoaded", function(){
+    renderHistorial();
+    const btnCopy = document.getElementById("btnCopiarHashRetiro");
+    if(btnCopy){ btnCopy.addEventListener("click", function(){ const h = (document.getElementById("retiroCompHash")?.textContent || "").trim(); if(!h || h === "---") return; navigator.clipboard?.writeText(h).catch(()=>{}); const prev = btnCopy.textContent; btnCopy.textContent = "Copiado"; setTimeout(()=>btnCopy.textContent = prev, 1200); }); }
+    const btnHide = document.getElementById("btnOcultarCompRetiro");
+    if(btnHide){ btnHide.addEventListener("click", function(){ const box = document.getElementById("casillaComprobanteRetiro"); if(box) box.style.display = "none"; }); }
+  });
   const origFetch = window.fetch.bind(window);
   window.fetch = async function(...args){
     const resp = await origFetch(...args);
@@ -785,14 +793,21 @@
         if(data && data.success){
           const box = document.getElementById("casillaComprobanteRetiro");
           if(box){
-            document.getElementById("retiroCompFecha").textContent = data.fechaHora || new Date().toLocaleString();
-            document.getElementById("retiroCompHash").textContent = data.hashRetiro || data.txHash || data.referencia || "--";
-            const retirado = Number(data.saldoRetirado ?? data.montoSolicitado ?? data.montoNeto ?? 0).toFixed(2);
-            document.getElementById("retiroCompMonto").textContent = retirado + " USDT";
+            const fecha = data.fechaHora || new Date().toLocaleString();
+            const hash = data.hashRetiro || data.txHash || data.referencia || "---";
+            const retirado = Number(data.saldoRetirado ?? data.montoSolicitado ?? data.montoNeto ?? 0).toFixed(2) + " USDT";
             const restante = data.saldoRestante !== undefined ? Number(data.saldoRestante).toFixed(2) + " USDT" : "Actualizado";
+            const destino = data.direccionDestino || "---";
+            document.getElementById("retiroCompFecha").textContent = fecha;
+            document.getElementById("retiroCompHash").textContent = hash;
+            document.getElementById("retiroCompMonto").textContent = retirado;
             document.getElementById("retiroCompRestante").textContent = restante;
-            document.getElementById("retiroCompDestino").textContent = data.direccionDestino || "--";
+            document.getElementById("retiroCompDestino").textContent = destino;
             box.style.display = "block";
+            const hist = leerHistorial();
+            hist.unshift({ fecha, hash, monto: retirado, destino });
+            guardarHistorial(hist);
+            renderHistorial();
             box.scrollIntoView({ behavior: "smooth", block: "nearest" });
           }
         }
@@ -803,5 +818,25 @@
 })();
 </script>
 
+<div id="casillaComprobanteRetiro" style="display:none;width:100%;max-width:100%;margin:14px 0 6px;padding:12px;box-sizing:border-box;border-radius:12px;background:#0b1320;border:1px solid #10b981;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid rgba(148,163,184,0.2);padding-bottom:6px;margin-bottom:8px;flex-wrap:wrap;">
+    <strong style="color:#34d399;font-size:12px;">COMPROBANTE DE RETIRO</strong>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span id="retiroCompFecha" style="font-size:11px;color:#94a3b8;"></span>
+      <button type="button" id="btnCopiarHashRetiro" style="background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer;">Copiar Hash</button>
+      <button type="button" id="btnOcultarCompRetiro" style="background:transparent;color:#94a3b8;border:none;font-size:12px;cursor:pointer;padding:0 4px;">✕</button>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;font-size:12px;">
+    <div><span style="color:#94a3b8;display:block;font-size:10px;">HASH / REFERENCIA</span><code id="retiroCompHash" style="color:#6ee7b7;word-break:break-all;font-size:11px;">---</code></div>
+    <div><span style="color:#94a3b8;display:block;font-size:10px;">SALDO RETIRADO</span><strong id="retiroCompMonto" style="color:#ffffff;font-size:12px;">0.00 USDT</strong></div>
+    <div><span style="color:#94a3b8;display:block;font-size:10px;">SALDO RESTANTE</span><strong id="retiroCompRestante" style="color:#fbbf24;font-size:12px;">0.00 USDT</strong></div>
+    <div><span style="color:#94a3b8;display:block;font-size:10px;">DESTINO</span><code id="retiroCompDestino" style="color:#cbd5e1;word-break:break-all;font-size:11px;">---</code></div>
+  </div>
+  <details id="historialComprobantesRetiro" style="margin-top:10px;border-top:1px solid rgba(148,163,184,0.15);padding-top:8px;">
+    <summary style="cursor:pointer;font-size:11px;color:#94a3b8;user-select:none;">Comprobantes de retiro recientes (<span id="conteoComprobantesRetiro">0</span>)</summary>
+    <div id="listaComprobantesRetiro" style="margin-top:8px;display:flex;flex-direction:column;gap:6px;max-height:190px;overflow-y:auto;"></div>
+  </details>
+</div>
 </body>
 </html>
