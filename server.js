@@ -1192,7 +1192,7 @@ const enviarPagoHandler = async (req, res) => {
 
         // Registrar transacción
         await db.run(
-            'INSERT INTO transacciones (referencia, monto, telefonoEmisor, destinoFinal, fechaHora) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, fechaHora) VALUES (?, ?, ?, ?, ?)',
             [referenciaPago, montoNum, emisor.telefono, receptor.telefono, ahora]
         );
 
