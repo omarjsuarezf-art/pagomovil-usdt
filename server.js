@@ -202,6 +202,47 @@ function calcularComisionRetiro(monto) {
 // ==========================================
 // VALIDADOR AUTOMÁTICO BLOCKCHAIN (HTTP DIRECTO)
 // ==========================================
+async function consultarSaldoUsdtPolygon(walletAddress) {
+  return new Promise((resolve) => {
+    if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress.trim())) {
+      return resolve({ ok: false, saldo: 0, mensaje: "Cartera Polygon asignada no válida." });
+    }
+    const cleanAddr = walletAddress.trim().toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const callData = "0x70a08231" + cleanAddr;
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [{ to: "0xc2132D05D31c914a87C6611C10748AECB3329081", data: callData }, "latest"],
+      id: 1
+    });
+    const req = https.request({
+      hostname: "polygon-mainnet.g.alchemy.com",
+      path: "/v2/alh_QXifklhC8Iqox8-9wTbcR",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }
+    }, (res) => {
+      let body = "";
+      res.on("data", (ch) => (body += ch));
+      res.on("end", () => {
+        try {
+          const json = JSON.parse(body);
+          if (!json.result || json.result === "0x") {
+            return resolve({ ok: true, saldo: 0, mensaje: "Saldo 0 en Polygon." });
+          }
+          const rawUnits = BigInt(json.result);
+          const saldoUsdt = Number(rawUnits) / 1e6;
+          return resolve({ ok: true, saldo: saldoUsdt, mensaje: "Saldo consultado en Polygon." });
+        } catch (e) {
+          return resolve({ ok: false, saldo: 0, mensaje: "Error leyendo respuesta de Polygon." });
+        }
+      });
+    });
+    req.on("error", () => resolve({ ok: false, saldo: 0, mensaje: "Error de red consultando Polygon." }));
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function verificarHashPolygonEnBlockchain(txHash, montoEsperadoMinimo) {
     return new Promise((resolve) => {
         if (!txHash || txHash.trim().length < 10) {
@@ -1199,8 +1240,21 @@ const logicaRecargaHandler = async (req, res) => {
                 telReal = user.telefono;
             }
 
-            const nuevoSaldo = saldoActual + montoNetoAcreditar;
-            const referenciaGen = 'REC-' + Math.floor(100000 + Math.random() * 900000);
+                const userWalletInfo = await db.get('SELECT id, telefono, assigned_wallet FROM usuarios WHERE telefono = ? OR merchant_id = ? LIMIT 1', [telObjetivo, telObjetivo]);
+if (!userWalletInfo || !userWalletInfo.assigned_wallet) {
+  return res.status(400).json({ success: false, message: '❌ No tienes una cartera Polygon asignada para verificar depósitos reales.' });
+}
+const checkPolygon = await consultarSaldoUsdtPolygon(userWalletInfo.assigned_wallet);
+if (!checkPolygon.ok) {
+  return res.status(400).json({ success: false, message: `❌ ${checkPolygon.mensaje}` });
+}
+if (checkPolygon.saldo < montoLimpio) {
+  return res.status(400).json({ success: false, message: `❌ Saldo insuficiente en tu cartera Polygon (${checkPolygon.saldo.toFixed(2)} USDT disponibles; necesitas al menos ${montoLimpio.toFixed(2)} USDT).`, saldoPolygon: checkPolygon.saldo });
+}
+const refPolygon = `POLY-${userWalletInfo.assigned_wallet.slice(-6).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+
+    const nuevoSaldo = saldoActual + montoNetoAcreditar;
+// dup_removed: const refPolygon = 'REC-' + Math.floor(100000 + Math.random() * 900000);
             const ahora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
 
             // Actualizar balance y registrar la transacción sin depender de hashes
@@ -1208,21 +1262,21 @@ const logicaRecargaHandler = async (req, res) => {
             await db.run(`
                 INSERT INTO transacciones (referencia, monto, telefonoEmisor, telefonoDestino, reference_hash, fechaHora) 
                 VALUES (?, ?, ?, ?, ?, ?)
-            `, [referenciaGen, montoLimpio, 'DIRECTO_WALLET', telReal, referenciaGen, ahora]);
+            `, [refPolygon, montoLimpio, userWalletInfo.assigned_wallet, telReal, refPolygon, ahora]);
             
             await db.run(
                 'INSERT INTO comisiones (tipo, monto, referencia, fechaHora) VALUES (?, ?, ?, ?)',
-                ['binance', comisionAplicar, referenciaGen, ahora]
+                ['binance', comisionAplicar, refPolygon, ahora]
             );
 
-            await enviarMensajeWhatsappSeguro(telReal, `¡RECARGA ACREDITADA CON ÉXITO! 📥\nMonto: $${montoLimpio.toFixed(2)}\nAcreditado: $${montoNetoAcreditar.toFixed(2)}\nRef: ${referenciaGen}`);
+            await enviarMensajeWhatsappSeguro(telReal, `¡RECARGA ACREDITADA CON ÉXITO! 📥\nMonto: $${montoLimpio.toFixed(2)}\nAcreditado: $${montoNetoAcreditar.toFixed(2)}\nRef: ${refPolygon}`);
 
             res.json({ 
                 success: true, 
-                message: `¡Recarga de $${montoLimpio.toFixed(2)} USDT procesada! Acreditados $${montoNetoAcreditar.toFixed(2)}. Ref: ${referenciaGen}`,
+                message: `¡Recarga de $${montoLimpio.toFixed(2)} USDT procesada! Acreditados $${montoNetoAcreditar.toFixed(2)}. Ref: ${refPolygon}`,
                 montoAcreditado: montoNetoAcreditar.toFixed(2),
                 comisionAplicada: comisionAplicar.toFixed(2),
-                referencia: referenciaGen
+                referencia: refPolygon
             });
         } catch (err) {
             console.error("Error en recarga directa:", err.message);
