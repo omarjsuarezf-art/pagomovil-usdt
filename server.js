@@ -41,7 +41,7 @@ let db;
 async function enviarCorreoResend(destino, asunto, mensajeHtml) {
     try {
         const respuesta = await resend.emails.send({
-            from: 'PagoMovil USDT <onboarding@resend.dev>',
+            from: 'PagoMovil USDT <no-reply@pagomovilusdt.com>',
             to: [destino],
             subject: asunto,
             html: mensajeHtml
