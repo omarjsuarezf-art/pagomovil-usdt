@@ -179,15 +179,15 @@ const POLYGON_USDT_CONTRACT = '0xc2132d05d31c914a87c6611c10748aeb04b58e2f'; // U
 const PLATFORM_POLYGON_WALLET = (process.env.PLATFORM_POLYGON_WALLET || '').toLowerCase(); // Tu wallet receptor oficial en Polygon
 
 const COMISION_FIJA_USUARIO = 1.00;         
-const COMISION_PORCENTAJE_COMERCIO = 0.03;  // 3%
+const COMISION_PORCENTAJE_COMERCIO = 0.015;  // 3%
 const COMISION_MINIMA_COMERCIO = 2.00;      // Mínimo $2.00 USDT
 const COSTO_CAMBIO_PLAN_COMERCIAL = 5.00;
 
 const MONTO_MINIMO_RECARGA = 5.00;
-const PORCENTAJE_RECARGA = 0.02; 
+const PORCENTAJE_RECARGA = 0.015; 
 const MINIMO_COMISION_RECARGA = 1.00;
 
-const PORCENTAJE_RETIRO = 0.02;  
+const PORCENTAJE_RETIRO = 0.015;  
 const MINIMO_COMISION_RETIRO = 1.00;
 
 function calcularComisionComercio(montoVenta) {
@@ -420,7 +420,7 @@ app.post('/api/recuperar-pin-request', limiterPagos, async (req, res) => {
     }
     const usuario = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
     if (!usuario) {
-      return res.status(404).json({ success: false, message: 'El número no está registrado en el sistema.' });
+      return res.status(404).json({ success: false, message: 'El número no está registrado. Complete primero su registro y vinculación abajo (Cédula, Método y Correo/Cuenta) para crear su cuenta y poder acceder.' });
     }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     codigosRecuperacion.set(usuario.telefono, { otp, timestamp: Date.now() });
@@ -523,30 +523,97 @@ app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
 // ==========================================
 // APIS Y RUTAS
 // ==========================================
-app.get('/api/admin/balance', async (req, res) => {
-    try {
-        const rowWallets = await db.get('SELECT SUM(usdt_balance) AS totalUsuarios FROM wallets');
-        const rowBinance = await db.get("SELECT SUM(monto) AS totalBinance FROM comisiones WHERE tipo = 'binance'");
-        
-        const saldoUsuarios = rowWallets && rowWallets.totalUsuarios ? rowWallets.totalUsuarios : 0;
-        const gananciaBinance = rowBinance && rowBinance.totalBinance ? rowBinance.totalBinance : 0;
 
-        res.json({
-            success: true,
-            saldoUsuarios: saldoUsuarios.toFixed(2),
-            gananciaBinance: gananciaBinance.toFixed(2),
-            totalGanancias: gananciaBinance.toFixed(2)
-        });
+const fsAdmin = require('fs');
+const pathAdmin = require('path');
+const envFilePath = pathAdmin.join(__dirname, '.env');
+
+function obtenerAdminPass() {
+  if (process.env.ADMIN_PANEL_PASS && process.env.ADMIN_PANEL_PASS.trim()) {
+    return process.env.ADMIN_PANEL_PASS.trim();
+  }
+  try {
+    const envRaw = fsAdmin.readFileSync(envFilePath, 'utf8');
+    const m = envRaw.match(/^ADMIN_PANEL_PASS=(.*)$/m);
+    if (m && m[1].trim()) {
+      process.env.ADMIN_PANEL_PASS = m[1].trim();
+      return process.env.ADMIN_PANEL_PASS;
+    }
+  } catch (_) {}
+  return '';
+}
+
+function guardarAdminPass(nuevaClave) {
+  const limpia = String(nuevaClave || '').trim();
+  if (!limpia) return false;
+  process.env.ADMIN_PANEL_PASS = limpia;
+  try {
+    let envRaw = fsAdmin.existsSync(envFilePath) ? fsAdmin.readFileSync(envFilePath, 'utf8') : '';
+    if (/^ADMIN_PANEL_PASS=/m.test(envRaw)) {
+      envRaw = envRaw.replace(/^ADMIN_PANEL_PASS=.*$/m, `ADMIN_PANEL_PASS=${limpia}`);
+    } else {
+      envRaw = envRaw.trimEnd() + `\nADMIN_PANEL_PASS=${limpia}\n`;
+    }
+    fsAdmin.writeFileSync(envFilePath, envRaw, 'utf8');
+  } catch (_) {}
+  return true;
+}
+
+function verificarClaveAdmin(req, res, next) {
+  const claveConfigurada = obtenerAdminPass();
+  const claveEnviada = String(req.headers['x-admin-pass'] || req.query.adminPass || '').trim();
+  if (!claveConfigurada) {
+    return res.status(401).json({ success: false, needsSetup: true, message: 'Configura tu clave de administrador para acceder.' });
+  }
+  if (!claveEnviada || claveEnviada !== claveConfigurada) {
+    return res.status(401).json({ success: false, message: 'Clave de administrador incorrecta.' });
+  }
+  return next();
+}
+
+app.post('/api/admin/auth/setup', (req, res) => {
+  const actual = obtenerAdminPass();
+  const { nuevaClave, claveActual } = req.body || {};
+  if (!nuevaClave || String(nuevaClave).trim().length < 4) {
+    return res.status(400).json({ success: false, message: 'La clave debe tener al menos 4 caracteres.' });
+  }
+  if (actual && String(claveActual || '').trim() !== actual) {
+    return res.status(401).json({ success: false, message: 'Clave actual incorrecta.' });
+  }
+  guardarAdminPass(nuevaClave);
+  return res.json({ success: true, message: 'Clave de administrador guardada.' });
+});
+
+app.post('/api/admin/auth/verificar', verificarClaveAdmin, (req, res) => {
+  return res.json({ success: true });
+});
+
+app.get('/api/admin/balance', verificarClaveAdmin, async (req, res) => {
+  try {
+    const rowWallets = await db.get('SELECT SUM(CASE WHEN typeof(usdt_balance) IN ("integer","real") AND isfinite(usdt_balance) THEN usdt_balance ELSE 0 END) AS totalUsuarios FROM wallets');
+    const rowBinance = await db.get("SELECT SUM(CASE WHEN typeof(monto) IN ('integer','real') AND isfinite(monto) THEN monto ELSE 0 END) AS totalBinance FROM comisiones WHERE tipo = 'binance'");
+
+    const rawSaldo = Number(rowWallets && rowWallets.totalUsuarios);
+    const rawGanancia = Number(rowBinance && rowBinance.totalBinance);
+    const saldoUsuarios = Number.isFinite(rawSaldo) ? rawSaldo : 0;
+    const gananciaBinance = Number.isFinite(rawGanancia) ? rawGanancia : 0;
+
+    res.json({
+      success: true,
+      saldoUsuarios: saldoUsuarios.toFixed(2),
+      gananciaBinance: gananciaBinance.toFixed(2),
+      totalGanancias: gananciaBinance.toFixed(2)
+    });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
 // NUEVO: RUTA DE LISTADO Y CONTEO DE USUARIOS PARA EL PANEL ADMIN
-app.get('/api/admin/usuarios', async (req, res) => {
+app.get('/api/admin/usuarios', verificarClaveAdmin, async (req, res) => {
     try {
         const rows = await db.all(`
-            SELECT usuarios.id, usuarios.telefono, usuarios.accountType, usuarios.merchant_id, wallets.usdt_balance 
+            SELECT usuarios.id, usuarios.telefono, usuarios.accountType, usuarios.merchant_id, usuarios.respaldo_completado, usuarios.respaldo_fecha, wallets.usdt_balance 
             FROM usuarios 
             LEFT JOIN wallets ON usuarios.id = wallets.user_id 
             ORDER BY usuarios.id DESC
