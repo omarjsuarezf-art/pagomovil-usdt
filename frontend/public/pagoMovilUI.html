@@ -261,6 +261,7 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+      if (typeof window.marcarRespaldoCompletadoUI === "function") window.marcarRespaldoCompletadoUI();
 
     datosRespaldo = null;
     document.getElementById("wbAddr").textContent = "";
@@ -1138,56 +1139,28 @@
 
 
 <script>
-(function() {
-  const KEY_PREFIX = "wb_respaldo_ok_";
-  function getAccountKey() {
-    try {
-      const tel = (document.querySelector("#wbTelefono, [name='telefono']") && document.querySelector("#wbTelefono, [name='telefono']").value)
-        || localStorage.getItem("pm_telefono")
-        || localStorage.getItem("telefono")
-        || "default";
-      return KEY_PREFIX + String(tel).trim();
-    } catch (_) {
-      return KEY_PREFIX + "default";
+(function(){
+  function mostrarPanel(){
+    const box=document.getElementById("panelRespaldo12Palabras");
+    if(box){ box.style.removeProperty("display"); box.classList.remove("hidden"); }
+  }
+  function ocultarPanel(){
+    const box=document.getElementById("panelRespaldo12Palabras");
+    if(box){ box.style.display="none"; }
+  }
+  document.addEventListener("DOMContentLoaded", mostrarPanel);
+  document.addEventListener("click", function(ev){
+    const t=ev.target;
+    if(!t) return;
+    if(t.id==="btnValidarCodigoWb" || (t.closest && t.closest("#btnValidarCodigoWb"))){
+      setTimeout(mostrarPanel, 150);
+      setTimeout(mostrarPanel, 600);
     }
-  }
-  window.marcarRespaldoCompletadoUI = function() {
-    try {
-      localStorage.setItem(getAccountKey(), "1");
-    } catch (_) {}
-    const box = document.getElementById("panelRespaldo12Palabras");
-    if (box) box.style.display = "none";
-  };
-  window.ocultarPanelRespaldoCompletado = function() {
-    try {
-      if (localStorage.getItem(getAccountKey()) === "1") {
-        const box = document.getElementById("panelRespaldo12Palabras");
-        if (box) box.style.display = "none";
-      }
-    } catch (_) {}
-  };
-  document.addEventListener("DOMContentLoaded", function() {
-    window.ocultarPanelRespaldoCompletado();
-  });
-  const origFetch = window.fetch;
-  if (typeof origFetch === "function") {
-    window.fetch = async function(...args) {
-      const res = await origFetch.apply(this, args);
-      try {
-        const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
-        if (url.includes("/api/wallet-backup/")) {
-          const clone = res.clone();
-          const data = await clone.json().catch(() => null);
-          if (data && data.respaldoCompletado === true) {
-            window.marcarRespaldoCompletadoUI();
-          }
-        }
-      } catch (_) {}
-      return res;
-    };
-  }
+    if(t.id==="btnDescargarWbTxt" || (t.closest && t.closest("#btnDescargarWbTxt"))){
+      setTimeout(ocultarPanel, 200);
+    }
+  }, true);
 })();
 </script>
-
 </body>
 </html>
