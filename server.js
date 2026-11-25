@@ -142,9 +142,16 @@ inicializarBaseDatos();
 // ==========================================
 // CONFIGURACIÓN DE RATE LIMITING (SEGURIDAD DIFERENCIADA)
 // ==========================================
+const obtenerIpSegura = (req) => {
+    const rawIp = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.ip || '0.0.0.0';
+    return String(rawIp).split(',')[0].trim();
+};
+
 const limiterPagos = rateLimit({
     windowMs: 15 * 60 * 1000, 
     max: 30,
+    keyGenerator: obtenerIpSegura,
+    validate: false,
     message: { 
         success: false, 
         message: 'Demasiadas solicitudes procesadas. Por seguridad intente de nuevo más tarde.' 
@@ -153,16 +160,33 @@ const limiterPagos = rateLimit({
     legacyHeaders: false,
 });
 
+const limiterRegistroBot = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    keyGenerator: obtenerIpSegura,
+    validate: false,
+    message: {
+        success: false,
+        message: 'Demasiados intentos de registro desde esta conexión. Intente más tarde.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 const limiterConsultasComercio = rateLimit({
     windowMs: 1 * 60 * 1000,
     max: 120,
+    keyGenerator: obtenerIpSegura,
+    validate: false,
     standardHeaders: true,
     legacyHeaders: false,
 });
 
 const limiterGeneral = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 1000 
+    max: 1000,
+    keyGenerator: obtenerIpSegura,
+    validate: false
 });
 
 app.use(limiterGeneral);
@@ -616,6 +640,7 @@ app.get('/api/admin/usuarios', verificarClaveAdmin, async (req, res) => {
             SELECT usuarios.id, usuarios.telefono, usuarios.accountType, usuarios.merchant_id, usuarios.respaldo_completado, usuarios.respaldo_fecha, wallets.usdt_balance 
             FROM usuarios 
             LEFT JOIN wallets ON usuarios.id = wallets.user_id 
+            WHERE COALESCE(usuarios.telefono, '') NOT LIKE 'BOT_%' 
             ORDER BY usuarios.id DESC
         `);
         res.json({ success: true, usuarios: rows });
@@ -768,7 +793,14 @@ app.post('/api/cambiar-pin', limiterPagos, async (req, res) => {
 // ==========================================
 // RUTA DE REGISTRO DE MÉTODOS / MONEDEROS DE RECEPCIÓN (VERIFICACIÓN ÚNICA CERO TERCEROS)
 // ==========================================
-app.post('/api/registrar-metodos', limiterPagos, async (req, res) => {
+app.post('/api/registrar-metodos', limiterRegistroBot, async (req, res) => {
+    const { cedulaTitular: cedRaw, metodo: metRaw, cuentaDestino: destRaw } = req.body || {};
+    const cedCheck = String(cedRaw || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const destCheck = String(destRaw || '').trim().toLowerCase();
+    const cedulasBloqueadas = new Set(['V12345678', '12345678', 'V99999999', '99999999', 'V11111111', '11111111', 'V99000001', 'V99000002', 'V99000003']);
+    if (cedulasBloqueadas.has(cedCheck) || /^0x0{20,}/.test(destCheck)) {
+        return res.status(400).json({ success: false, message: 'Registro bloqueado por datos inválidos o de prueba.' });
+    }
     const { cedulaTitular, metodo, cuentaDestino, telefono } = req.body;
 
     if (!cedulaTitular || !metodo || !cuentaDestino) {
