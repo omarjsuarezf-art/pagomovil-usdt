@@ -31,6 +31,13 @@ app.set('trust proxy', 1);
 
 // Middleware
 app.use(express.json());
+
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({ success: false, message: "JSON inválido o cuerpo vacío en la petición." });
+  }
+  return next(err);
+});
 app.use(express.urlencoded({ extended: true }));
 
 let db;
@@ -46,8 +53,7 @@ async function enviarCorreoResend(destino, asunto, mensajeHtml) {
             subject: asunto,
             html: mensajeHtml
         });
-        console.log('✅ Correo de Resend enviado con éxito. ID:', respuesta.id);
-        return true;
+        if (respuesta.error) { console.error("❌ Error Resend API:", JSON.stringify(respuesta.error)); return false; } console.log("✅ Correo de Resend enviado con éxito. ID:", respuesta.data?.id || respuesta.id); return true;
     } catch (err) {
         console.error('⚠️ Error al enviar correo vía Resend:', err.message);
         return false;
@@ -891,7 +897,7 @@ app.get('/api/usuario-wallet/:telefono', async (req, res) => {
         if (!user || !user.assigned_wallet) {
             // Si por alguna razón no la tuviera creada, se la generamos de emergencia
             const nueva = generarWalletIndividual();
-            await db.run('UPDATE usuarios SET assigned_wallet = ?, private_key = ? WHERE telefono = ? OR merchant_id = ?', [nueva.address, nueva.privateKey, telefono, telefono]);
+            await db.run('UPDATE usuarios SET assigned_wallet = ?, private_key = NULL WHERE telefono = ? OR merchant_id = ?', [nueva.address, telefono, telefono]);
             return res.json({ success: true, wallet: nueva.address });
         }
         res.json({ success: true, wallet: user.assigned_wallet });
@@ -1133,6 +1139,7 @@ async function procesarRetiroHandler(req, res) {
       );
 
       // 5. Retornar éxito con detalle completo para comprobante y verificación
+    await notificarRespaldoPendienteSiAplica(req.body && (req.body.userId || req.body.user_id) || (usuario && usuario.id));
       return res.json({
         success: true,
         message: `Retiro de $${montoNeto.toFixed(2)} USDT procesado con éxito!`,
@@ -1222,6 +1229,7 @@ const enviarPagoHandler = async (req, res) => {
           `🔴 *PAGO ENVIADO*\n\nMonto: ${montoNum.toFixed(2)} USDT\nPara: ${receptor.telefono}\nRef: ${referenciaPago}`
         );
 
+    await notificarRespaldoPendienteSiAplica(req.body && (req.body.userId || req.body.user_id) || (usuario && usuario.id));
         return res.json({
             success: true,
             message: `¡Pago de $${montoNum.toFixed(2)} USDT enviado con éxito!`,
@@ -1354,6 +1362,155 @@ setInterval(async () => {
 const PORT = process.env.PORT || 3000;
 
 app.post("/api/bot-recuperacion/validar-y-reactivar", limiterPagos, async (req,res)=>{ try{ const correoIngresado=String(req.body.correo||"").trim().toLowerCase(); const cedulaIngresada=String(req.body.cedula||"").trim(); const pinAnterior=String(req.body.pinAnterior||"").trim(); const nuevoTelefonoLimpio=req.body.nuevoTelefono?String(req.body.nuevoTelefono).replace(/\D/g,""):""; const nuevoPinLimpio=req.body.nuevoPin?String(req.body.nuevoPin).trim():""; if(!correoIngresado||!cedulaIngresada||!pinAnterior) return res.status(400).json({success:false,message:"Faltan datos"}); if(nuevoPinLimpio&&!/^\d{4}$/.test(nuevoPinLimpio)) return res.status(400).json({success:false,message:"PIN de 4 dígitos"}); const usuario=await db.get("SELECT * FROM usuarios WHERE cedula=? AND lower(trim(correo))=?",[cedulaIngresada,correoIngresado]); if(!usuario) return res.status(404).json({success:false,message:"No coincide cédula y correo"}); const histMatch=await db.get("SELECT id FROM pin_historial WHERE user_id=? AND pin_valor=? LIMIT 1",[usuario.id,pinAnterior]); const pinValido=(usuario.pinSeguridad&&String(usuario.pinSeguridad).trim()===pinAnterior)||Boolean(histMatch); if(!pinValido) return res.status(401).json({success:false,message:"PIN anterior no coincide"}); const pinActivacion=nuevoPinLimpio||String(Math.floor(100000+Math.random()*900000)); await db.run("UPDATE usuarios SET pinSeguridad=? WHERE id=?",[pinActivacion,usuario.id]); await db.run("INSERT INTO pin_historial (user_id,pin_valor,creado_en) VALUES (?,?,datetime('now'))",[usuario.id,pinActivacion]); let telefonoFinal=usuario.telefono; if(nuevoTelefonoLimpio&&nuevoTelefonoLimpio!==usuario.telefono){ const conf=await db.get("SELECT id FROM usuarios WHERE telefono=? AND id!=?",[nuevoTelefonoLimpio,usuario.id]); if(conf) return res.status(409).json({success:false,message:"Teléfono en uso"}); await db.run("UPDATE usuarios SET telefono=? WHERE id=?",[nuevoTelefonoLimpio,usuario.id]); telefonoFinal=nuevoTelefonoLimpio; } const w=await db.get("SELECT assigned_wallet,usdt_balance FROM wallets w LEFT JOIN usuarios u ON u.id=w.user_id WHERE w.user_id=?",[usuario.id]); if(typeof enviarCorreoResend==="function"){ await enviarCorreoResend(correoIngresado,"Reactivación Autorizada - PagoMóvil USDT","<p>Acceso reactivado. Código: <b>"+pinActivacion+"</b>. Cartera y saldo intactos.</p>"); } return res.json({success:true,reactivado:true,userId:usuario.id,telefono:telefonoFinal,assigned_wallet:(w&&w.assigned_wallet)||usuario.assigned_wallet||null,usdt_balance:w?w.usdt_balance:0}); }catch(e){ console.error(e); return res.status(500).json({success:false,message:"Error interno"}); } });
+
+
+const backupReminderSentAt = new Map();
+
+async function notificarRespaldoPendienteSiAplica(userId) {
+  try {
+    if (!userId) return;
+    const row = await db.get(
+      "SELECT u.id, u.telefono, u.respaldo_completado, COALESCE(w.usdt_balance, 0) AS usdt_balance FROM usuarios u LEFT JOIN wallets w ON w.user_id = u.id WHERE u.id = ? LIMIT 1",
+      [userId]
+    );
+    if (!row || !row.telefono) return;
+    if (Number(row.respaldo_completado || 0) === 1) return;
+    if (Number(row.usdt_balance || 0) <= 0) return;
+
+    const key = String(row.id);
+    const lastSent = backupReminderSentAt.get(key) || 0;
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    if (Date.now() - lastSent < oneDayMs) return;
+
+    backupReminderSentAt.set(key, Date.now());
+    const msg =
+      "Gracias por formar parte de nuestra plataforma. Te agradecemos que descargues tu frase de 12 palabras y la guardes en un lugar seguro, ya que no podemos ayudarte a recuperarla en vista de que usted es el único dueño de su dinero.";
+
+    if (typeof enviarMensajeWhatsappSeguro === "function") {
+      await Promise.resolve(enviarMensajeWhatsappSeguro(row.telefono, msg)).catch(() => {});
+    }
+  } catch (e) {
+    console.error("Error en notificarRespaldoPendienteSiAplica:", e);
+  }
+}
+
+// === WALLET_BACKUP_OTP_ENDPOINTS ===
+const crypto = require("crypto");
+const walletBackupOtps = new Map();
+const adminWhatsappDestino = String(process.env.ADMIN_WHATSAPP || process.env.ADMIN_PHONE || "").trim();
+
+function normCedula(v) {
+  return String(v || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function normCorreo(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+app.post("/api/wallet-backup/request-code", async (req, res) => {
+  try {
+    const cedulaInput = normCedula(req.body && req.body.cedula);
+    const correoInput = normCorreo(req.body && req.body.correo);
+    const telefonoSession = String((req.body && req.body.telefono) || (req.session && req.session.telefono) || "").trim();
+
+    if (!cedulaInput || !correoInput) {
+      return res.status(400).json({ success: false, message: "Debes ingresar tu cédula y tu correo registrado." });
+    }
+
+    const sql = telefonoSession
+      ? "SELECT id, telefono, cedula, correo, assigned_wallet, respaldo_completado FROM usuarios WHERE telefono = ? LIMIT 1"
+      : "SELECT id, telefono, cedula, correo, assigned_wallet, respaldo_completado FROM usuarios WHERE UPPER(REPLACE(REPLACE(TRIM(cedula), '-', ''), ' ', '')) = ? AND LOWER(TRIM(correo)) = ? LIMIT 1";
+    const params = telefonoSession ? [telefonoSession] : [cedulaInput, correoInput];
+
+    const user = await db.get(sql, params);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "No se encontró la cuenta registrada." });
+    }
+
+    if (normCedula(user.cedula) !== cedulaInput || normCorreo(user.correo) !== correoInput) {
+      return res.status(403).json({ success: false, message: "La cédula o el correo no coinciden con la cuenta." });
+    }
+
+    const code = String(crypto.randomInt(100000, 999999));
+    const key = String(user.id || user.telefono);
+    walletBackupOtps.set(key, { code, expiresAt: Date.now() + 5 * 60 * 1000, attempts: 0 });
+
+    const texto = "Código de 6 dígitos para respaldar tu frase de 12 palabras: " + code + " (vence en 5 min).";
+    if (typeof enviarMensajeWhatsappSeguro === "function" && user.telefono) {
+      await Promise.resolve(enviarMensajeWhatsappSeguro(user.telefono, texto)).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      message: "Código de 6 dígitos enviado a tu WhatsApp registrado.",
+      assignedWallet: user.assigned_wallet || "",
+      respaldoCompletado: Boolean(user.respaldo_completado)
+    });
+  } catch (e) {
+    console.error("Error en /api/wallet-backup/request-code:", e);
+    return res.status(500).json({ success: false, message: "Error al solicitar el código." });
+  }
+});
+
+app.post("/api/wallet-backup/verify-code", async (req, res) => {
+  try {
+    const codeInput = String((req.body && req.body.code) || "").trim();
+    const cedulaInput = normCedula(req.body && req.body.cedula);
+    const correoInput = normCorreo(req.body && req.body.correo);
+    const telefonoSession = String((req.body && req.body.telefono) || (req.session && req.session.telefono) || "").trim();
+
+    if (!/^[0-9]{6}$/.test(codeInput)) {
+      return res.status(400).json({ success: false, message: "Ingresa un código válido de 6 dígitos." });
+    }
+
+    const sql = telefonoSession
+      ? "SELECT id, telefono, cedula, correo, assigned_wallet, respaldo_completado FROM usuarios WHERE telefono = ? LIMIT 1"
+      : "SELECT id, telefono, cedula, correo, assigned_wallet, respaldo_completado FROM usuarios WHERE UPPER(REPLACE(REPLACE(TRIM(cedula), '-', ''), ' ', '')) = ? AND LOWER(TRIM(correo)) = ? LIMIT 1";
+    const params = telefonoSession ? [telefonoSession] : [cedulaInput, correoInput];
+
+    const user = await db.get(sql, params);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "Cuenta no encontrada." });
+    }
+
+    const key = String(user.id || user.telefono);
+    const entry = walletBackupOtps.get(key);
+    if (!entry || Date.now() > entry.expiresAt) {
+      walletBackupOtps.delete(key);
+      return res.status(400).json({ success: false, message: "Código vencido o no solicitado. Pide uno nuevo." });
+    }
+    if (entry.attempts >= 5) {
+      walletBackupOtps.delete(key);
+      return res.status(429).json({ success: false, message: "Demasiados intentos. Solicita otro código." });
+    }
+    if (entry.code !== codeInput) {
+      entry.attempts += 1;
+      return res.status(400).json({ success: false, message: "Código incorrecto. Revisa tu WhatsApp." });
+    }
+
+    walletBackupOtps.delete(key);
+    await db.run(
+      "UPDATE usuarios SET respaldo_completado = 1, respaldo_fecha = datetime('now') WHERE id = ?",
+      [user.id]
+    );
+
+    if (typeof enviarMensajeWhatsappSeguro === "function" && adminWhatsappDestino) {
+      const avisoAdmin =
+        "Usuario verificado y respaldado: " +
+        (user.telefono || user.correo || ("ID " + user.id)) +
+        (user.assigned_wallet ? (" | Cartera: " + user.assigned_wallet) : "");
+      await Promise.resolve(enviarMensajeWhatsappSeguro(adminWhatsappDestino, avisoAdmin)).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      assignedWallet: user.assigned_wallet || "",
+      respaldoCompletado: true
+    });
+  } catch (e) {
+    console.error("Error en /api/wallet-backup/verify-code:", e);
+    return res.status(500).json({ success: false, message: "Error al validar el código." });
+  }
+});
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor de PagoMóvil USDT corriendo en el puerto ${PORT}`);

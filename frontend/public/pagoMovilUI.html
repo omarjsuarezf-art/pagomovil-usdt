@@ -114,7 +114,167 @@
                 </div>
 
                 <!-- BOTÓN / BANNER DE ACTUALIZACIÓN A COMERCIAL -->
-                <div id="seccionUpgradeComercial" class="hidden">
+                <!-- WALLET_BACKUP_PANEL_START -->
+<div id="panelRespaldo12Palabras" class="w-full mb-4 p-4 rounded-2xl bg-slate-900/95 border border-slate-700/80 space-y-3 text-xs text-slate-200">
+  <div class="flex items-center justify-between gap-2 flex-wrap">
+    <div>
+      <span class="block font-bold text-emerald-400 tracking-wide">FRASE DE 12 PALABRAS PERSONAL</span>
+      <span class="text-[11px] text-slate-400">Verifica tu cédula, correo y código de 6 dígitos por WhatsApp para respaldar</span>
+    </div>
+    <button type="button" id="btnAbrirVerif12" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer transition">
+      Verificar y respaldar
+    </button>
+  </div>
+
+  <div id="cajaVerif12" class="hidden p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+    <div class="grid grid-cols-1 gap-2">
+      <input type="text" id="wbCedula" placeholder="1. Tu número de cédula (CI)" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs">
+      <input type="email" id="wbCorreo" placeholder="2. Correo con el que abriste la cuenta" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs">
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <button type="button" id="btnEnviarCodigoWb" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs cursor-pointer transition">
+        3. Enviar código de 6 dígitos a WhatsApp
+      </button>
+      <input type="text" id="wbCodigoOtp" maxlength="6" placeholder="Código 6 dígitos" class="w-32 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs">
+      <button type="button" id="btnValidarCodigoWb" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer transition">
+        Revelar y preparar .txt
+      </button>
+    </div>
+    <div id="wbEstado" class="text-[11px] text-amber-300"></div>
+
+    <div id="wbReveladoBox" class="hidden p-3 rounded-xl bg-slate-900 border border-emerald-700/60 space-y-2 break-all text-[11px]">
+      <div><span class="text-slate-400">Dirección (0x...):</span> <code id="wbAddr" class="text-emerald-300"></code></div>
+      <div><span class="text-slate-400">Frase de 12 palabras:</span> <code id="wbWords" class="text-sky-300"></code></div>
+      <div><span class="text-slate-400">Clave privada:</span> <code id="wbKey" class="text-amber-300"></code></div>
+      <p class="text-[11px] text-rose-300 leading-snug">
+        Aviso importante: al descargar el archivo .txt se ocultará este panel. La pérdida o extravío posterior de tus 12 palabras o clave privada es exclusiva responsabilidad del titular.
+      </p>
+      <button type="button" id="btnDescargarWbTxt" class="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs cursor-pointer transition">
+        Descargar .txt y ocultar
+      </button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  let datosRespaldo = null;
+  const btnAbrir = document.getElementById("btnAbrirVerif12");
+  const caja = document.getElementById("cajaVerif12");
+  const estado = document.getElementById("wbEstado");
+  const revBox = document.getElementById("wbReveladoBox");
+  const panelRaiz = document.getElementById("panelRespaldo12Palabras");
+
+  function getTelefonoActual() {
+    try {
+      return localStorage.getItem("telefono") || localStorage.getItem("userPhone") || "";
+    } catch (e) { return ""; }
+  }
+
+  btnAbrir?.addEventListener("click", () => {
+    caja?.classList.toggle("hidden");
+  });
+
+  document.getElementById("btnEnviarCodigoWb")?.addEventListener("click", async () => {
+    const cedula = document.getElementById("wbCedula")?.value.trim();
+    const correo = document.getElementById("wbCorreo")?.value.trim();
+    if (!cedula || !correo) {
+      if (estado) estado.textContent = "Completa primero tu cédula y tu correo registrado.";
+      return;
+    }
+    if (estado) estado.textContent = "Enviando código de 6 dígitos a WhatsApp...";
+    try {
+      const r = await fetch("/api/wallet-backup/request-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cedula, correo, telefono: getTelefonoActual() })
+      });
+      const d = await r.json();
+      if (estado) estado.textContent = d.message || (d.success ? "Código enviado." : "No se pudo enviar.");
+    } catch (e) {
+      if (estado) estado.textContent = "Error de conexión al solicitar el código.";
+    }
+  });
+
+  function asegurarEthers(cb) {
+    if (window.ethers) return cb();
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js";
+    s.onload = cb;
+    s.onerror = () => { if (estado) estado.textContent = "No se pudo cargar librería criptográfica."; };
+    document.head.appendChild(s);
+  }
+
+  document.getElementById("btnValidarCodigoWb")?.addEventListener("click", async () => {
+    const cedula = document.getElementById("wbCedula")?.value.trim();
+    const correo = document.getElementById("wbCorreo")?.value.trim();
+    const code = document.getElementById("wbCodigoOtp")?.value.trim();
+    if (estado) estado.textContent = "Validando código de 6 dígitos...";
+    try {
+      const r = await fetch("/api/wallet-backup/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cedula, correo, code, telefono: getTelefonoActual() })
+      });
+      const d = await r.json();
+      if (!d.success) {
+        if (estado) estado.textContent = d.message || "Código inválido.";
+        return;
+      }
+      asegurarEthers(() => {
+        const w = ethers.Wallet.createRandom();
+        datosRespaldo = {
+          address: d.assignedWallet || w.address,
+          mnemonic: w.mnemonic ? w.mnemonic.phrase : "",
+          privateKey: w.privateKey
+        };
+        document.getElementById("wbAddr").textContent = datosRespaldo.address;
+        document.getElementById("wbWords").textContent = datosRespaldo.mnemonic;
+        document.getElementById("wbKey").textContent = datosRespaldo.privateKey;
+        revBox?.classList.remove("hidden");
+        if (estado) estado.textContent = "Verificación aprobada. Descarga tu .txt y guárdalo bien.";
+      });
+    } catch (e) {
+      if (estado) estado.textContent = "Error al validar el código.";
+    }
+  });
+
+  document.getElementById("btnDescargarWbTxt")?.addEventListener("click", () => {
+    if (!datosRespaldo) return;
+    const txt = [
+      "RESPALDO PERSONAL DE CARTERA - PAGOMOVIL USDT",
+      "Fecha: " + new Date().toISOString(),
+      "--------------------------------------------------",
+      "Direccion (0x...): " + datosRespaldo.address,
+      "Frase de 12 palabras: " + datosRespaldo.mnemonic,
+      "Clave privada: " + datosRespaldo.privateKey,
+      "--------------------------------------------------",
+      "AVISO: Una vez descargado este archivo se oculta de la pantalla.",
+      "La pérdida posterior de estas 12 palabras o clave privada es exclusiva",
+      "responsabilidad del titular y no puede recuperarse en el sistema."
+    ].join("\n");
+    const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "respaldo_12_palabras_" + datosRespaldo.address.slice(2, 8) + ".txt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    datosRespaldo = null;
+    document.getElementById("wbAddr").textContent = "";
+    document.getElementById("wbWords").textContent = "";
+    document.getElementById("wbKey").textContent = "";
+    document.getElementById("wbCodigoOtp").value = "";
+    revBox?.classList.add("hidden");
+    caja?.classList.add("hidden");
+    panelRaiz?.classList.add("hidden");
+  });
+})();
+</script>
+<!-- WALLET_BACKUP_PANEL_END -->
+<div id="seccionUpgradeComercial" class="hidden">
                     <button onclick="ejecutarUpgradeComercial()" class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black p-3 rounded-xl transition text-xs flex flex-col items-center justify-center gap-1 shadow-lg shadow-amber-500/10 cursor-pointer">
                         <span>ACTUALIZAR A CUENTA COMERCIAL</span>
                         <span class="text-[10px] font-semibold opacity-90">($5.00 USDT / Transferencias ilimitadas)</span>
@@ -973,6 +1133,59 @@
     } catch(e){}
     return resp;
   };
+})();
+</script>
+
+
+<script>
+(function() {
+  const KEY_PREFIX = "wb_respaldo_ok_";
+  function getAccountKey() {
+    try {
+      const tel = (document.querySelector("#wbTelefono, [name='telefono']") && document.querySelector("#wbTelefono, [name='telefono']").value)
+        || localStorage.getItem("pm_telefono")
+        || localStorage.getItem("telefono")
+        || "default";
+      return KEY_PREFIX + String(tel).trim();
+    } catch (_) {
+      return KEY_PREFIX + "default";
+    }
+  }
+  window.marcarRespaldoCompletadoUI = function() {
+    try {
+      localStorage.setItem(getAccountKey(), "1");
+    } catch (_) {}
+    const box = document.getElementById("panelRespaldo12Palabras");
+    if (box) box.style.display = "none";
+  };
+  window.ocultarPanelRespaldoCompletado = function() {
+    try {
+      if (localStorage.getItem(getAccountKey()) === "1") {
+        const box = document.getElementById("panelRespaldo12Palabras");
+        if (box) box.style.display = "none";
+      }
+    } catch (_) {}
+  };
+  document.addEventListener("DOMContentLoaded", function() {
+    window.ocultarPanelRespaldoCompletado();
+  });
+  const origFetch = window.fetch;
+  if (typeof origFetch === "function") {
+    window.fetch = async function(...args) {
+      const res = await origFetch.apply(this, args);
+      try {
+        const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
+        if (url.includes("/api/wallet-backup/")) {
+          const clone = res.clone();
+          const data = await clone.json().catch(() => null);
+          if (data && data.respaldoCompletado === true) {
+            window.marcarRespaldoCompletadoUI();
+          }
+        }
+      } catch (_) {}
+      return res;
+    };
+  }
 })();
 </script>
 
