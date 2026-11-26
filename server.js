@@ -340,217 +340,76 @@ function formatearNumeroWhatsapp(numero) {
 }
 
 async function enviarMensajeWhatsappSeguro(numero, mensaje) {
-    const idInstance = process.env.GREEN_API_ID_INSTANCE;
-    const apiTokenInstance = process.env.GREEN_API_TOKEN_INSTANCE;
+  const idInstance = process.env.GREEN_API_ID_INSTANCE;
+  const apiTokenInstance = process.env.GREEN_API_TOKEN_INSTANCE;
 
-    if (!idInstance || !apiTokenInstance) {
-        console.error('⚠️ Credenciales de Green-API no configuradas en el archivo .env');
-        return;
-    }
-
-    try {
-        let numLimpio = formatearNumeroWhatsapp(numero);
-        if (!numLimpio) return;
-
-        // Asegurar formato internacional completo (ej: 58412...)
-        let chatId = numLimpio.startsWith('58') ? `${numLimpio}@c.us` : `58${numLimpio}@c.us`;
-
-        const data = JSON.stringify({
-            chatId: chatId,
-            message: mensaje
-        });
-
-        // Extraer los primeros dígitos de la instancia para armar el host correcto (ej: 7107)
-        const serverPrefix = idInstance.toString().substring(0, 4);
-
-        const options = {
-            hostname: `${serverPrefix}.api.green-api.com`,
-            port: 443,
-            path: `/waInstance${idInstance}/sendMessage/${apiTokenInstance}`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data)
-            }
-        };
-
-        const req = https.request(options, (res) => {
-            let responseBody = '';
-            res.on('data', (chunk) => { responseBody += chunk; });
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    console.log(`✅ Mensaje de Green-API enviado con éxito a ${chatId}`);
-                } else {
-                    console.error(`⚠️ Error al enviar WhatsApp vía Green-API (${res.statusCode}):`, responseBody);
-                }
-            });
-        });
-
-        req.on('error', (error) => {
-            console.error(`⚠️ Error de conexión con Green-API:`, error.message);
-        });
-
-        req.write(data);
-        req.end();
-
-    } catch (e) {
-        console.error(`⚠️ Excepción al enviar mensaje WhatsApp a ${numero}:`, e.message);
-    }
-}
-// ==========================================
-// RUTAS DE PÁGINAS (VISTAS - FLUJO OBLIGATORIO DE AUTH)
-// ==========================================
-app.get('/', (req, res) => {
-    res.sendFile(path.join(publicPath, 'pagoMovilUI.html'));
-});
-
-app.get('/auth', (req, res) => {
-    res.sendFile(path.join(publicPath, 'authMovilUI.html'));
-});
-
-app.get('/panel', (req, res) => {
-    res.sendFile(path.join(publicPath, 'pagoMovilUI.html'));
-});
-
-app.get('/recarga', (req, res) => {
-    res.sendFile(path.join(publicPath, 'recargaMovilUI.html'));
-});
-
-app.get('/recargamovil.html', (req, res) => {
-    res.sendFile(path.join(publicPath, 'recargaMovilUI.html'));
-});
-
-app.get('/recargamovil', (req, res) => {
-    res.sendFile(path.join(publicPath, 'recargaMovilUI.html'));
-});
-
-app.get('/admin', (req, res) => {
-    const adminFile = path.join(publicPath, 'admin.html');
-    if (fs.existsSync(adminFile)) {
-        res.sendFile(adminFile);
-    } else {
-        res.status(404).send(`Error: El archivo no existe en esta ruta exacta: ${adminFile}`);
-    }
-});
-
-// ==========================================
-// RUTAS DE RECUPERACIÓN DE PIN (BLINDADAS CON CÉDULA Y OTP)
-// ==========================================
-app.post('/api/recuperar-pin-request', limiterPagos, async (req, res) => {
-  try {
-    const telefono = (req.body.telefono || req.body.telefonoUsuario || '').trim();
-    if (!telefono) {
-      return res.status(400).json({ success: false, message: 'El número de teléfono es obligatorio.' });
-    }
-    const usuario = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
-    if (!usuario) {
-      return res.status(404).json({ success: false, message: 'El número no está registrado. Complete primero su registro y vinculación abajo (Cédula, Método y Correo/Cuenta) para crear su cuenta y poder acceder.' });
-    }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    codigosRecuperacion.set(usuario.telefono, { otp, timestamp: Date.now() });
-    if (typeof enviarMensajeWhatsappSeguro === 'function') {
-      await enviarMensajeWhatsappSeguro(
-        usuario.telefono,
-        `🔐 *RECUPERACIÓN DE PIN*\n\nTu código de verificación de 6 dígitos es: *${otp}*\nVálido por 5 minutos.`
-      );
-    }
-    return res.json({ success: true, message: 'Código OTP enviado por WhatsApp.' });
-  } catch (err) {
-    console.error('Error en /api/recuperar-pin-request:', err);
-    return res.status(500).json({ success: false, message: 'Error interno al solicitar recuperación de PIN.' });
+  if (!idInstance || !apiTokenInstance) {
+    console.error("⚠️ Credenciales de Green-API no configuradas en el archivo .env");
+    return false;
   }
-});
 
-app.post('/api/recuperar-pin-confirm', limiterPagos, async (req, res) => {
-    const telefono = (req.body.telefono || '').trim();
-    const otp = (req.body.otp || '').trim();
-    const ultimos4Cedula = (req.body.ultimos4Cedula || req.body.ultimosCedula || '').trim();
-    const nuevoPin = (req.body.nuevoPin || '').trim();
-
-    if (!telefono || !otp || !ultimos4Cedula || !nuevoPin) {
-        return res.status(400).json({ success: false, message: 'Todos los campos de recuperación son obligatorios.' });
+  try {
+    let numLimpio = formatearNumeroWhatsapp(numero);
+    if (!numLimpio) {
+      console.warn("⚠️ Número inválido o vacío para WhatsApp:", numero);
+      return false;
     }
 
-    if (nuevoPin.length !== 4) {
-        return res.status(400).json({ success: false, message: 'El nuevo PIN debe ser estrictamente de 4 dígitos.' });
-    }
+    let chatId = numLimpio.startsWith("58") ? `${numLimpio}@c.us` : `58${numLimpio}@c.us`;
 
-    if (ultimos4Cedula.length !== 4) {
-        return res.status(400).json({ success: false, message: 'Debe ingresar exactamente los últimos 4 dígitos.' });
-    }
+    const data = JSON.stringify({
+      chatId: chatId,
+      message: mensaje
+    });
 
-    try {
-        const registroOTP = codigosRecuperacion.get(telefono);
-        if (!registroOTP || registroOTP.otp !== otp || (Date.now() - registroOTP.timestamp > 5 * 60 * 1000)) {
-            return res.status(400).json({ success: false, message: '❌ Código de verificación inválido o expirado.' });
-        }
+    const serverPrefix = idInstance.toString().substring(0, 4);
 
-        const usuario = await db.get('SELECT * FROM usuarios WHERE telefono = ? OR merchant_id = ?', [telefono, telefono]);
-        if (!usuario) {
-            return res.status(404).json({ success: false, message: '❌ Usuario no encontrado.' });
-        }
+    const options = {
+      hostname: `${serverPrefix}.api.green-api.com`,
+      port: 443,
+      path: `/waInstance${idInstance}/sendMessage/${apiTokenInstance}`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(data)
+      },
+      timeout: 15000
+    };
 
-        const metodoVinculado = await db.get('SELECT cedulaTitular, cuentaDestino FROM metodos_pago WHERE cedulaTitular LIKE ?', [`%${ultimos4Cedula}`]);
-        if (!metodoVinculado || !metodoVinculado.cedulaTitular.endsWith(ultimos4Cedula)) {
-            return res.status(400).json({ success: false, message: '❌ Los últimos 4 dígitos de la cédula no coinciden.' });
-        }
+    return await new Promise((resolve) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => { responseBody += chunk; });
+        res.on("end", () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            console.log(`✅ Mensaje de Green-API enviado con éxito a ${chatId} | Respuesta:`, responseBody);
+            resolve(true);
+          } else {
+            console.error(`⚠️ Error al enviar Whatsapp vía Green-API (${res.statusCode}) a ${chatId}:`, responseBody);
+            resolve(false);
+          }
+        });
+      });
 
-        // ==========================================
-        // NUEVA CAPA: VALIDACIÓN Y ENVÍO SEGURO POR CORREO
-        // ==========================================
-        const correoRegistrado = metodoVinculado.cuentaDestino ? metodoVinculado.cuentaDestino.trim().toLowerCase() : '';
-        const correoIngresado = (req.body.correo || '').trim().toLowerCase();
+      req.on("timeout", () => {
+        console.error(`⚠️ Timeout al enviar Whatsapp vía Green-API a ${chatId}`);
+        req.destroy();
+        resolve(false);
+      });
 
-        if (!correoRegistrado || !correoRegistrado.includes('@')) {
-            return res.status(400).json({ success: false, message: '❌ El usuario no tiene un correo electrónico válido vinculado en su método de pago.' });
-        }
+      req.on("error", (e) => {
+        console.error(`⚠️ Excepción de red al enviar mensaje WhatsApp a ${chatId}:`, e.message);
+        resolve(false);
+      });
 
-        if (!correoIngresado || correoIngresado !== correoRegistrado) {
-            return res.status(400).json({ 
-                success: false, 
-                message: '❌ El correo electrónico ingresado no coincide con el registrado en el sistema.' 
-            });
-        }
-
-        // Aviso de seguridad al correo (sin pisar el nuevo PIN de 4 dígitos)
-        const mensajeHtmlCorreo = `
-          <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff;">
-            <h2 style="color: #2b6cb0; text-align: center;">Alerta de Seguridad - PagoMovil USDT</h2>
-            <p>Hola,</p>
-            <p>Se ha restablecido el PIN de seguridad de tu cuenta.</p>
-            <p>Si fuiste tú quien realizó este cambio, ya puedes ingresar con tu nuevo PIN sin inconvenientes.</p>
-            <p style="color: #b91c1c; font-weight: bold;">Si NO reconoces esta actividad, dirígete de inmediato al bot de soporte para proteger tu cuenta.</p>
-          </div>
-        `;
-        if (typeof enviarCorreoResend === 'function') {
-          await enviarCorreoResend(correoRegistrado, 'Alerta de seguridad: cambio de PIN en PagoMovil USDT', mensajeHtmlCorreo);
-        }
-        await db.run('UPDATE usuarios SET pinSeguridad = ? WHERE id = ?', [nuevoPin, usuario.id]);
-        codigosRecuperacion.delete(telefono);
-
-        await enviarMensajeWhatsappSeguro(
-            usuario.telefono,
-            `✅ *SEGURIDAD ACTUALIZADA*\n\nTu solicitud de cambio ha sido procesada y se envió una alerta de seguridad a tu correo electrónico registrado.`
-        );
-
-        return res.json({ success: true, message: '¡PIN restablecido con éxito y se envió la alerta a tu correo!' });
-    } catch (err) {
-        console.error('Error al confirmar recuperación de PIN:', err);
-        return res.status(500).json({ success: false, message: 'Error interno al procesar el cambio de PIN.' });
-    }
-});
-// ==========================================
-// APIS Y RUTAS
-// ==========================================
-
-
-// ==========================================
-// APIS Y RUTAS
-// ==========================================
-
-const fsAdmin = require('fs');
-const pathAdmin = require('path');
-const envFilePath = pathAdmin.join(__dirname, '.env');
+      req.write(data);
+      req.end();
+    });
+  } catch (e) {
+    console.error("⚠️ Excepción al enviar mensaje WhatsApp:", e.message);
+    return false;
+  }
+}
 
 function obtenerAdminPass() {
   if (process.env.ADMIN_PANEL_PASS && process.env.ADMIN_PANEL_PASS.trim()) {
@@ -1056,7 +915,7 @@ if (!pinValido) {
             }
 
             const esComercio = usuarioExistente.accountType === 'comercial' || usuarioExistente.accountType === 'emprendedor';
-            if (usuarioExistente.metodoVinculado !== 1 || !usuarioExistente.cedula || !usuarioExistente.correo) {
+            if (!esComercio && usuarioExistente.metodoVinculado !== 1) {
                 return res.status(403).json({
                     success: false,
                     bloqueoRegistro: true,
